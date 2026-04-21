@@ -13,6 +13,7 @@ general:
   disable_images_css: true # Tắt tải hình ảnh, CSS để tiết kiệm cực nhiều RAM
   page_load_timeout: 20  # Giây chờ tải trang tối đa
   delay_between_pages: 1 # Giây nghỉ giữa mỗi trang (lịch sự với server)
+  delay_between_searches: 30 # Giây nghỉ giữa các search để VPS giải phóng RAM
   max_pages_per_search: 20 # Giới hạn số trang tối đa mỗi lần quét
 
 # ============================================================

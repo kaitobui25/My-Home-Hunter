@@ -27,6 +27,7 @@ class GeneralConfig:
     disable_images_css: bool = True
     page_load_timeout: int = 20
     delay_between_pages: float = 1.0
+    delay_between_searches: int = 30
     max_pages_per_search: int = 20
 
 
@@ -147,6 +148,7 @@ def load_config(path: str = "config.yaml") -> AppConfig:
         disable_images_css=g.get("disable_images_css", True),
         page_load_timeout=g.get("page_load_timeout", 20),
         delay_between_pages=g.get("delay_between_pages", 1.0),
+        delay_between_searches=g.get("delay_between_searches", 30),
         max_pages_per_search=g.get("max_pages_per_search", 20),
     )
 

@@ -138,14 +138,19 @@ def run_all(config: AppConfig, target_name: str | None = None):
                        f" matching '{target_name}'" if target_name else "")
         return
 
-    for search in searches_to_run:
+    for i, search in enumerate(searches_to_run):
         if _shutdown:
             break
         try:
             run_search(search, config, listing_filter, csv_exporter, telegram, geocoder)
-
         except Exception as e:
             logger.error("Search '%s' failed: %s", search.name, e, exc_info=True)
+            
+        if i < len(searches_to_run) - 1 and not _shutdown:
+            delay = config.general.delay_between_searches
+            if delay > 0:
+                logger.info("Sleeping %d seconds before next search to free up RAM...", delay)
+                _sleep_interruptible(delay)
 
 
 # ---------------------------------------------------------------------------

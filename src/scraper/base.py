@@ -9,55 +9,46 @@ import logging
 import os
 from abc import ABC, abstractmethod
 
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service as ChromeService
+from playwright.sync_api import sync_playwright
 
 logger = logging.getLogger(__name__)
 
 
-class WebDriverBase:
-    """Manages Chrome WebDriver lifecycle."""
+class PlaywrightBase:
+    """Manages Playwright browser lifecycle."""
 
     def __init__(self, webdriver_path: str = "", headless: bool = True, disable_images_css: bool = True):
-        self.webdriver_path = webdriver_path
+        # webdriver_path is kept for config compatibility but ignored
         self.headless = headless
         self.disable_images_css = disable_images_css
-        self.driver = self._init_driver()
+        self._init_driver()
 
     def _init_driver(self):
-        opts = Options()
-        if self.headless:
-            opts.add_argument("--headless")
-        opts.add_argument("--no-sandbox")
-        opts.add_argument("--disable-dev-shm-usage")
-        opts.add_argument("--disable-gpu")
-        opts.add_argument("--window-size=1920x1080")
-        opts.add_argument("--log-level=3")  # suppress chrome logs
-        opts.add_experimental_option("excludeSwitches", ["enable-logging"])
+        self.playwright = sync_playwright().start()
+        self.browser = self.playwright.chromium.launch(headless=self.headless)
+        self.context = self.browser.new_context(viewport={'width': 1920, 'height': 1080})
+        self.page = self.context.new_page()
 
         if self.disable_images_css:
-            prefs = {
-                "profile.managed_default_content_settings.images": 2,
-                "profile.managed_default_content_settings.stylesheet": 2,
-            }
-            opts.add_experimental_option("prefs", prefs)
+            self.page.route("**/*", self._block_resources)
 
-        if self.webdriver_path:
-            service = ChromeService(executable_path=self.webdriver_path)
-            return webdriver.Chrome(service=service, options=opts)
-        # Selenium Manager handles driver download automatically
-        return webdriver.Chrome(options=opts)
+    def _block_resources(self, route):
+        if route.request.resource_type in ["image", "stylesheet", "font"]:
+            route.abort()
+        else:
+            route.continue_()
 
     def restart_driver(self):
         self.close_driver()
-        self.driver = self._init_driver()
+        self._init_driver()
 
     def close_driver(self):
         try:
-            self.driver.quit()
-        except Exception:
-            pass
+            if hasattr(self, 'context'): self.context.close()
+            if hasattr(self, 'browser'): self.browser.close()
+            if hasattr(self, 'playwright'): self.playwright.stop()
+        except Exception as e:
+            logger.debug("Error closing playwright: %s", e)
 
 
 class AbstractHunter(ABC):

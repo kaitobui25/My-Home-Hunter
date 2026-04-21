@@ -10,36 +10,27 @@ import re
 import time
 from datetime import datetime, timezone
 
-from selenium.common.exceptions import NoSuchElementException, StaleElementReferenceException
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import WebDriverWait
-
-from src.scraper.base import AbstractHunter, WebDriverBase
+from src.scraper.base import AbstractHunter, PlaywrightBase
 from src.config import GeneralConfig, SearchConfig
 
 logger = logging.getLogger(__name__)
 
 
-class SUUMORentalHunter(AbstractHunter, WebDriverBase):
+class SUUMORentalHunter(AbstractHunter, PlaywrightBase):
     """Scrapes rental listings from SUUMO chintai pages."""
 
     def __init__(self, search: SearchConfig, general: GeneralConfig):
         AbstractHunter.__init__(self, search_name=search.name)
-        WebDriverBase.__init__(
+        PlaywrightBase.__init__(
             self,
             webdriver_path=general.webdriver_path,
             headless=general.headless,
             disable_images_css=general.disable_images_css,
         )
         self.start_url = search.url
-        self.page_load_timeout = general.page_load_timeout
+        self.page_load_timeout = general.page_load_timeout * 1000  # Playwright timeout in ms
         self.delay_between_pages = general.delay_between_pages
         self.max_pages = general.max_pages_per_search
-
-    # ------------------------------------------------------------------
-    # AbstractHunter interface
-    # ------------------------------------------------------------------
 
     def scrape(self) -> list[dict]:
         all_listings = []
@@ -67,24 +58,22 @@ class SUUMORentalHunter(AbstractHunter, WebDriverBase):
 
         return all_listings
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
     def _scrape_page(self, url: str, page_num: int) -> list[dict]:
-        self.driver.get(url)
+        try:
+            self.page.goto(url, timeout=self.page_load_timeout)
+        except Exception as e:
+            logger.warning("[%s] Page %d goto failed: %s", self.search_name, page_num, e)
+            return []
 
         # Wait for listings container
         try:
-            WebDriverWait(self.driver, self.page_load_timeout).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, ".cassetteitem"))
-            )
+            self.page.wait_for_selector(".cassetteitem", timeout=self.page_load_timeout)
         except Exception:
             logger.warning("[%s] Page %d: timeout waiting for listings.", self.search_name, page_num)
             return []
 
         listings = []
-        buildings = self.driver.find_elements(By.CSS_SELECTOR, ".cassetteitem")
+        buildings = self.page.query_selector_all(".cassetteitem")
 
         for building in buildings:
             listings.extend(self._parse_building(building))
@@ -94,13 +83,17 @@ class SUUMORentalHunter(AbstractHunter, WebDriverBase):
     def _parse_building(self, building) -> list[dict]:
         results = []
         try:
-            building_name = building.find_element(By.CSS_SELECTOR, ".cassetteitem_content-title").text.strip()
-            address = building.find_element(By.CSS_SELECTOR, ".cassetteitem_detail-col1").text.strip()
-            transportation = building.find_element(By.CSS_SELECTOR, ".cassetteitem_detail-col2").text.strip()
-        except NoSuchElementException:
+            title_elem = building.query_selector(".cassetteitem_content-title")
+            addr_elem = building.query_selector(".cassetteitem_detail-col1")
+            trans_elem = building.query_selector(".cassetteitem_detail-col2")
+            
+            building_name = title_elem.inner_text().strip() if title_elem else ""
+            address = addr_elem.inner_text().strip() if addr_elem else ""
+            transportation = trans_elem.inner_text().strip() if trans_elem else ""
+        except Exception:
             return results
 
-        rows = building.find_elements(By.CSS_SELECTOR, "tr.js-cassette_link")
+        rows = building.query_selector_all("tr.js-cassette_link")
         for row in rows:
             listing = self._parse_room_row(row, building_name, address, transportation)
             if listing:
@@ -110,26 +103,43 @@ class SUUMORentalHunter(AbstractHunter, WebDriverBase):
 
     def _parse_room_row(self, row, building_name: str, address: str, transportation: str) -> dict | None:
         try:
-            floor_raw = row.find_element(By.CSS_SELECTOR, "td:nth-child(3)").text.strip()
-            rent_raw = row.find_element(By.CSS_SELECTOR, ".cassetteitem_other-emphasis").text.strip()
-            admin_fee_raw = row.find_element(By.CSS_SELECTOR, ".cassetteitem_price--administration").text.strip()
-            deposit_raw = row.find_element(By.CSS_SELECTOR, ".cassetteitem_price--deposit").text.strip()
-            key_money_raw = row.find_element(By.CSS_SELECTOR, ".cassetteitem_price--gratuity").text.strip()
-            layout = row.find_element(By.CSS_SELECTOR, ".cassetteitem_madori").text.strip()
-            size_raw = row.find_element(By.CSS_SELECTOR, ".cassetteitem_menseki").text.strip()
-            url = row.find_element(By.CSS_SELECTOR, "a.cassetteitem_other-linktext").get_attribute("href")
+            floor_elem = row.query_selector("td:nth-child(3)")
+            rent_elem = row.query_selector(".cassetteitem_other-emphasis")
+            admin_fee_elem = row.query_selector(".cassetteitem_price--administration")
+            deposit_elem = row.query_selector(".cassetteitem_price--deposit")
+            key_money_elem = row.query_selector(".cassetteitem_price--gratuity")
+            layout_elem = row.query_selector(".cassetteitem_madori")
+            size_elem = row.query_selector(".cassetteitem_menseki")
+            url_elem = row.query_selector("a.cassetteitem_other-linktext")
+
+            floor_raw = floor_elem.inner_text().strip() if floor_elem else ""
+            rent_raw = rent_elem.inner_text().strip() if rent_elem else ""
+            admin_fee_raw = admin_fee_elem.inner_text().strip() if admin_fee_elem else ""
+            deposit_raw = deposit_elem.inner_text().strip() if deposit_elem else ""
+            key_money_raw = key_money_elem.inner_text().strip() if key_money_elem else ""
+            layout = layout_elem.inner_text().strip() if layout_elem else ""
+            size_raw = size_elem.inner_text().strip() if size_elem else ""
+            url = url_elem.get_attribute("href") if url_elem else ""
 
             # Try to get building age
             try:
-                age_text = row.find_element(By.CSS_SELECTOR, ".cassetteitem_detail-col3 div").text.strip()
-            except NoSuchElementException:
+                age_elem = row.query_selector(".cassetteitem_detail-col3 div")
+                age_text = age_elem.inner_text().strip() if age_elem else ""
+            except Exception:
                 age_text = ""
 
             # Try to get image
+            image_url = None
             try:
-                image_url = building_element_image(row)
+                img = row.query_selector(".casssetteitem_other-thumbnail-img") 
+                if img:
+                    image_url = img.get_attribute("src")
             except Exception:
-                image_url = None
+                pass
+
+            # Make url absolute if necessary
+            if url and url.startswith("/"):
+                url = "https://suumo.jp" + url
 
             return {
                 "name": building_name,
@@ -161,42 +171,26 @@ class SUUMORentalHunter(AbstractHunter, WebDriverBase):
 
     def _get_next_page_url(self) -> str | None:
         try:
-            next_btn = self.driver.find_elements(
-                By.XPATH, "//p[@class='pagination-parts']/a[contains(text(), '次へ')]"
-            )
+            next_btn = self.page.query_selector("p.pagination-parts a:has-text('次へ')")
             if next_btn:
-                return next_btn[0].get_attribute("href")
+                href = next_btn.get_attribute("href")
+                if href and href.startswith("/"):
+                    return "https://suumo.jp" + href
+                return href
         except Exception:
             pass
         return None
 
-
-# ------------------------------------------------------------------
 # Parse helpers
-# ------------------------------------------------------------------
-
-def building_element_image(row) -> str | None:
-    """Try to get the thumbnail image from the building card."""
-    try:
-        img = row.find_element(By.CSS_SELECTOR, ".casssetteitem_other-thumbnail-img")
-        return img.get_attribute("src")
-    except Exception:
-        return None
-
-
 def _parse_man_yen(text: str) -> float | None:
-    """Parse '7.5万円' -> 7.5. Returns None if not parseable."""
     if not text:
         return None
-    # Handle cases like "-" or "なし"
     match = re.search(r"([\d.]+)\s*万円", text)
     if match:
         return float(match.group(1))
     return None
 
-
 def _parse_yen(text: str) -> float | None:
-    """Parse '5,000円' -> 5000. Returns None if not parseable."""
     if not text:
         return None
     match = re.search(r"([\d,]+)\s*円", text)
@@ -204,9 +198,7 @@ def _parse_yen(text: str) -> float | None:
         return float(match.group(1).replace(",", ""))
     return None
 
-
 def _parse_m2(text: str) -> float | None:
-    """Parse '42.5m2' or '42.5㎡' -> 42.5."""
     if not text:
         return None
     match = re.search(r"([\d.]+)\s*(?:m|㎡)", text, re.IGNORECASE)
@@ -214,9 +206,7 @@ def _parse_m2(text: str) -> float | None:
         return float(match.group(1))
     return None
 
-
 def _parse_floor_num(text: str) -> int | None:
-    """Parse '3階' -> 3."""
     if not text:
         return None
     match = re.search(r"(\d+)\s*階", text)
@@ -224,9 +214,7 @@ def _parse_floor_num(text: str) -> int | None:
         return int(match.group(1))
     return None
 
-
 def _parse_building_age(text: str) -> int | None:
-    """Parse '築29年' -> 29. '新築' -> 0."""
     if not text:
         return None
     if "新築" in text:

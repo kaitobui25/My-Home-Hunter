@@ -10,36 +10,27 @@ import re
 import time
 from datetime import datetime, timezone
 
-from selenium.common.exceptions import NoSuchElementException, StaleElementReferenceException
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import WebDriverWait
-
-from src.scraper.base import AbstractHunter, WebDriverBase
+from src.scraper.base import AbstractHunter, PlaywrightBase
 from src.config import GeneralConfig, SearchConfig
 
 logger = logging.getLogger(__name__)
 
 
-class SUUMOSaleHunter(AbstractHunter, WebDriverBase):
+class SUUMOSaleHunter(AbstractHunter, PlaywrightBase):
     """Scrapes sale/land listings from SUUMO bukken pages."""
 
     def __init__(self, search: SearchConfig, general: GeneralConfig):
         AbstractHunter.__init__(self, search_name=search.name)
-        WebDriverBase.__init__(
+        PlaywrightBase.__init__(
             self,
             webdriver_path=general.webdriver_path,
             headless=general.headless,
             disable_images_css=general.disable_images_css,
         )
         self.start_url = search.url
-        self.page_load_timeout = general.page_load_timeout
+        self.page_load_timeout = general.page_load_timeout * 1000
         self.delay_between_pages = general.delay_between_pages
         self.max_pages = general.max_pages_per_search
-
-    # ------------------------------------------------------------------
-    # AbstractHunter interface
-    # ------------------------------------------------------------------
 
     def scrape(self) -> list[dict]:
         all_listings = []
@@ -66,25 +57,21 @@ class SUUMOSaleHunter(AbstractHunter, WebDriverBase):
 
         return all_listings
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
     def _scrape_page(self, url: str, page_num: int) -> list[dict]:
-        self.driver.get(url)
         try:
-            WebDriverWait(self.driver, self.page_load_timeout).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "#right_sliderList2"))
-            )
+            self.page.goto(url, timeout=self.page_load_timeout)
+        except Exception as e:
+            logger.warning("[%s] Page %d goto failed: %s", self.search_name, page_num, e)
+            return []
+
+        try:
+            self.page.wait_for_selector("#right_sliderList2", timeout=self.page_load_timeout)
         except Exception:
             logger.warning("[%s] Page %d: timeout.", self.search_name, page_num)
             return []
 
         listings = []
-        items = self.driver.find_elements(
-            By.CSS_SELECTOR,
-            "#right_sliderList2 li[id^='jsiRightSliderListChild_']",
-        )
+        items = self.page.query_selector_all("#right_sliderList2 li[id^='jsiRightSliderListChild_']")
 
         for item in items:
             listing = self._parse_item(item)
@@ -95,17 +82,18 @@ class SUUMOSaleHunter(AbstractHunter, WebDriverBase):
 
     def _parse_item(self, item) -> dict | None:
         try:
-            property_name = item.find_element(By.CSS_SELECTOR, "p a").text.strip()
-            url = item.find_element(By.CSS_SELECTOR, "p a").get_attribute("href")
+            name_elem = item.query_selector("p a")
+            property_name = name_elem.inner_text().strip() if name_elem else "Unknown"
+            url = name_elem.get_attribute("href") if name_elem else ""
+            if url and url.startswith("/"):
+                url = "https://suumo.jp" + url
 
             # Price
             price_raw = "Not found"
             price_per_tsubo = "Not found"
-            price_elements = item.find_elements(
-                By.XPATH, ".//div[@class='fr w105 bw']/p[contains(text(), '円')]"
-            )
+            price_elements = item.query_selector_all("div.fr.w105.bw p:has-text('円')")
             for elem in price_elements:
-                text = elem.text
+                text = elem.inner_text()
                 if "万円" in text and price_raw == "Not found":
                     price_raw = text.strip()
                 elif "坪単価" in text:
@@ -115,41 +103,47 @@ class SUUMOSaleHunter(AbstractHunter, WebDriverBase):
 
             # Size
             try:
-                size_raw = item.find_element(By.CSS_SELECTOR, "div.fr p:nth-of-type(2)").text
+                size_elem = item.query_selector("div.fr p:nth-of-type(2)")
+                size_raw = size_elem.inner_text() if size_elem else "Not Available"
                 size_raw = size_raw.replace("土地／", "").replace("㎡", "m2").strip()
                 size_raw = re.sub(r"<[^>]+>", "", size_raw)
-            except NoSuchElementException:
+            except Exception:
                 size_raw = "Not Available"
 
             # Building coverage / floor area ratios
             try:
-                ratios_elem = item.find_element(
-                    By.XPATH,
-                    ".//div[@class='fr w105 bw']/p[contains(text(), '建ぺい率・容積率')]",
-                )
-                _, combined = ratios_elem.text.split("／")
-                bcr, far = combined.split("\u3000")  # fullwidth space
-                building_coverage_ratio = bcr.strip()
-                floor_area_ratio = far.strip()
-            except (NoSuchElementException, ValueError):
+                ratios_elem = item.query_selector("div.fr.w105.bw p:has-text('建ぺい率・容積率')")
+                if ratios_elem:
+                    _, combined = ratios_elem.inner_text().split("／")
+                    bcr, far = combined.split("\u3000")  # fullwidth space
+                    building_coverage_ratio = bcr.strip()
+                    floor_area_ratio = far.strip()
+                else:
+                    raise ValueError
+            except Exception:
                 building_coverage_ratio = "N/A"
                 floor_area_ratio = "N/A"
 
             # Features
-            feature_elems = item.find_elements(By.CSS_SELECTOR, "ul.cf li")
-            features = "\n".join(e.text for e in feature_elems)
+            feature_elems = item.query_selector_all("ul.cf li")
+            features = "\n".join(e.inner_text() for e in feature_elems)
 
             # Transportation
             try:
-                transportation = item.find_element(By.CSS_SELECTOR, "p.mt5:nth-of-type(2)").text.strip()
-            except NoSuchElementException:
+                trans_elem = item.query_selector("p.mt5:nth-of-type(2)")
+                transportation = trans_elem.inner_text().strip() if trans_elem else "N/A"
+            except Exception:
                 transportation = "N/A"
 
             # Image
             try:
-                img_url = item.find_element(By.CSS_SELECTOR, ".fl.w90 img").get_attribute("src")
-                img_url = re.sub(r"&w=\d+&h=\d+", "&w=500&h=500", img_url)
-            except NoSuchElementException:
+                img_elem = item.query_selector(".fl.w90 img")
+                if img_elem:
+                    img_url = img_elem.get_attribute("src")
+                    img_url = re.sub(r"&w=\d+&h=\d+", "&w=500&h=500", img_url) if img_url else None
+                else:
+                    img_url = None
+            except Exception:
                 img_url = None
 
             return {
@@ -163,14 +157,14 @@ class SUUMOSaleHunter(AbstractHunter, WebDriverBase):
                 "deposit_man_yen": None,
                 "key_money_raw": "",
                 "key_money_man_yen": None,
-                "layout": "",          # Sale listings typically don't have layout
+                "layout": "",
                 "size_m2": _parse_m2(size_raw),
                 "size_raw": size_raw,
                 "floor": "",
                 "floor_num": None,
-                "building_age": None,  # Sale pages don't expose this directly
+                "building_age": None,
                 "building_age_raw": "",
-                "address": features,  # features text includes address for sale
+                "address": features,
                 "transportation": transportation,
                 "url": url,
                 "image_url": img_url,
@@ -185,26 +179,18 @@ class SUUMOSaleHunter(AbstractHunter, WebDriverBase):
 
     def _get_next_page_url(self) -> str | None:
         try:
-            # Sale pages use different pagination
-            next_btn = self.driver.find_elements(
-                By.XPATH, "//p[@class='pagination-parts']/a[contains(text(), '次へ')]"
-            )
+            next_btn = self.page.query_selector("p.pagination-parts a:has-text('次へ')")
+            if not next_btn:
+                next_btn = self.page.query_selector("p.pagination-parts a.pagination-next")
             if next_btn:
-                return next_btn[0].get_attribute("href")
-            # Also try common SUUMO next-page button variants
-            next_btn = self.driver.find_elements(
-                By.CSS_SELECTOR, "p.pagination-parts a.pagination-next"
-            )
-            if next_btn:
-                return next_btn[0].get_attribute("href")
+                href = next_btn.get_attribute("href")
+                if href and href.startswith("/"):
+                    return "https://suumo.jp" + href
+                return href
         except Exception:
             pass
         return None
 
-
-# ------------------------------------------------------------------
-# Parse helpers (shared with rental hunter via copy — small enough)
-# ------------------------------------------------------------------
 
 def _parse_man_yen(text: str) -> float | None:
     if not text:
@@ -213,7 +199,6 @@ def _parse_man_yen(text: str) -> float | None:
     if match:
         return float(match.group(1))
     return None
-
 
 def _parse_m2(text: str) -> float | None:
     if not text:

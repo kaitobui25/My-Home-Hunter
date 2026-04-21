@@ -213,7 +213,7 @@ def _print_banner(config: AppConfig):
     print("=" * 60)
     print(f"  Searches enabled : {len(enabled)}")
     for s in enabled:
-        print(f"    • [{s.type.upper()}] {s.name}")
+        print(f"    - [{s.type.upper()}] {s.name}")
     print(f"  CSV export       : {'ON' if config.export.csv.enabled else 'OFF'}")
     tg = config.notifications.telegram
     print(f"  Telegram notify  : {'ON' if tg.enabled else 'OFF (set enabled: true in config)'}")

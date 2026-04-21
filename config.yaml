@@ -1,0 +1,109 @@
+# ============================================================
+# Home-Hunter Configuration File
+# Chỉnh sửa file này để thay đổi cấu hình toàn bộ hệ thống.
+# ============================================================
+
+general:
+  # Thời gian chờ giữa mỗi lần kiểm tra (giây). 3600 = 1 giờ
+  check_interval_seconds: 3600
+  # Đường dẫn chromedriver. Để trống để dùng Selenium Manager tự động
+  webdriver_path: ""
+  log_level: INFO        # DEBUG | INFO | WARNING | ERROR
+  headless: true         # true = chạy nền, false = hiện browser (debug)
+  disable_images_css: true # Tắt tải hình ảnh, CSS để tiết kiệm cực nhiều RAM
+  page_load_timeout: 20  # Giây chờ tải trang tối đa
+  delay_between_pages: 1 # Giây nghỉ giữa mỗi trang (lịch sự với server)
+  max_pages_per_search: 20 # Giới hạn số trang tối đa mỗi lần quét
+
+# ============================================================
+# DANH SÁCH TÌM KIẾM
+# Thêm bao nhiêu search cũng được.
+# type: rental (thuê nhà) | sale (mua bán/đất)
+# enabled: true/false để bật/tắt từng search không cần xóa
+# ============================================================
+searches:
+  - name: "Toyonaka Rental"
+    type: rental
+    enabled: true
+    url: "https://suumo.jp/jj/chintai/ichiran/FR301FC001/?ar=060&bs=040&pc=20&smk=&po1=25&po2=99&shkr1=03&shkr2=03&shkr3=03&shkr4=03&sc=27203&ta=27&cb=4.5&ct=8.0&md=06&md=07&md=08&md=09&md=10&md=11&md=12&md=13&et=9999999&mb=30&mt=9999999&cn=30&fw2="
+
+  - name: "Shonai Mikuni eki Rental"
+    type: rental
+    enabled: true
+    url: "https://suumo.jp/jj/chintai/ichiran/FR301FC001/?url=%2Fchintai%2Fichiran%2FFR301FC001%2F&ar=060&bs=040&pc=20&smk=&po1=25&po2=99&shkr1=03&shkr2=03&shkr3=03&shkr4=03&cb=4.0&ct=7.5&md=06&md=07&md=08&md=09&md=10&md=11&md=12&md=13&md=14&et=9999999&mb=30&mt=9999999&cn=30&ra=027&ek=208036610&ek=208018610&rn=2080&ae=20801"
+
+  # Ví dụ search thứ 2 (đang tắt)
+  # - name: "Tokyo Land Sale"
+  #   type: sale
+  #   enabled: false
+  #   url: "https://suumo.jp/jj/bukken/ichiran/JJ012FC003/?ar=030&bs=030&..."
+
+# ============================================================
+# ĐIỀU KIỆN LỌC
+# Chỉ gửi thông báo nếu listing thỏa MỌI điều kiện được bật.
+# null = không giới hạn / bỏ qua điều kiện đó.
+# ============================================================
+filters:
+  # --- Áp dụng chung cho cả rental và sale ---
+  min_size_m2: 30          # Diện tích tối thiểu (m²)
+  max_size_m2: null        # Diện tích tối đa (m²)
+  max_building_age_years: 35  # Tuổi tòa nhà tối đa (năm). null = bỏ qua
+
+  # --- Lọc theo vị trí (Geocoding) ---
+  location_filter:
+    enabled: true
+    # Tọa độ trung tâm (Ví dụ: Ga kanzakigawa)
+    center_lat: 34.73949
+    center_lng: 135.46403
+    # Bán kính tối đa (km)
+    max_distance_km: 2.0
+
+  # --- Chỉ áp dụng cho rental (thuê nhà) ---
+  rental:
+    max_rent_man_yen: 8.0    # Giá thuê tối đa (万円). 8.0 = 80,000 yên
+    max_admin_fee_yen: 10000 # Phí quản lý tối đa (yên). null = bỏ qua
+    max_deposit_man_yen: null   # Tiền đặt cọc tối đa (万円). null = bỏ qua
+    max_key_money_man_yen: null # Tiền lễ tối đa (万円). null = bỏ qua
+    # Danh sách sơ đồ chấp nhận. [] hoặc null = tất cả
+    # Hỗ trợ khớp chính xác ("2LDK") hoặc từ khóa ("LDK" = match mọi sơ đồ có LDK)
+    allowed_layouts:
+      - "2LDK"
+      - "2DK"
+      - "3LDK"
+      - "3DK"
+    min_floor: null         # Tầng tối thiểu. null = bỏ qua
+
+  # --- Chỉ áp dụng cho sale (mua bán) ---
+  sale:
+    max_price_man_yen: null       # Giá tối đa (万円). null = bỏ qua
+    max_price_per_tsubo: null     # Đơn giá/坪 tối đa
+
+# ============================================================
+# THÔNG BÁO QUA TELEGRAM
+# Hướng dẫn lấy token: https://core.telegram.org/bots/tutorial
+# Hướng dẫn lấy chat_id: nhắn /start cho bot, rồi vào:
+#   https://api.telegram.org/bot<TOKEN>/getUpdates
+# ============================================================
+notifications:
+  telegram:
+    enabled: true           # Đổi thành true để bật
+    bot_token: "8617693255:AAFeIdE1OHnZbnselCI4TYkhp75wkTE9Pbo"
+    chat_id: "7480163903"
+    max_per_run: 10          # Gửi tối đa N tin mỗi lần chạy (tránh spam)
+
+  # Discord (giữ lại để dùng sau nếu cần)
+  discord:
+    enabled: false
+    webhook_url: ""
+
+# ============================================================
+# XUẤT FILE CSV
+# ============================================================
+export:
+  csv:
+    enabled: false
+    output_dir: "results/csv"
+    # Tên file: {name} = tên search, {date} = ngày (YYYY-MM-DD)
+    filename: "{name}_{date}.csv"
+    # append_mode: true = thêm vào file cũ, false = tạo file mới mỗi lần
+    append_mode: true

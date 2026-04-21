@@ -1,0 +1,12 @@
+version: '3.8'
+services:
+  home-hunter:
+    container_name: home-hunter
+    build: .
+    volumes:
+      - ./config.yaml:/app/config.yaml   # Mount config file
+      - ./results:/app/results           # Persist CSV and seen_listings data
+    environment:
+      PYTHONIOENCODING: "utf-8"
+      LOG_LEVEL: INFO                    # Override log level if needed
+    restart: always

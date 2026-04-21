@@ -1,0 +1,14 @@
+screenshot*.png
+page_source*.html
+seen_listings.json
+results
+.vscode
+__pycache__
+.DS_Store
+.env
+*.log
+*.db
+*.sqlite
+venv
+
+

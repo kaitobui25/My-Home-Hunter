@@ -103,39 +103,67 @@ class NiftyRentalHunter(AbstractHunter, PlaywrightBase):
                 logger.warning("[%s] Timeout waiting for listings — page may be blocking bots.", self.search_name)
                 return []
 
-            # Scroll loop: keep scrolling until no new cards appear
-            max_scroll_rounds = self.max_pages  # treat each scroll as a "page"
-            scroll_round = 0
-            prev_count = 0
+            # Pagination loop: process current page, then find next page link
+            page_num = 1
+            current_url = self.start_url
 
-            while scroll_round < max_scroll_rounds:
-                # Count current cards
-                cur_count = self.page.evaluate(
-                    "document.querySelectorAll('li.result-bukken-list').length"
-                )
+            while current_url and page_num <= self.max_pages:
                 logger.info(
-                    "[%s] Scroll round %d: %d buildings loaded so far",
-                    self.search_name, scroll_round + 1, cur_count
+                    "[%s] Scraping page %d: %s", self.search_name, page_num, current_url
                 )
-
-                if cur_count == prev_count and scroll_round > 0:
-                    # No new content — we've reached the end
-                    logger.info("[%s] No new cards after scroll — all loaded.", self.search_name)
+                try:
+                    if page_num > 1:
+                        self.page.goto(current_url, timeout=self.page_load_timeout, wait_until="domcontentloaded")
+                except Exception as e:
+                    logger.warning("[%s] Page %d goto failed: %s", self.search_name, page_num, e)
                     break
 
-                prev_count = cur_count
+                # Wait for initial listings to appear
+                try:
+                    self.page.wait_for_selector("li.result-bukken-list", timeout=self.page_load_timeout)
+                except Exception:
+                    logger.warning("[%s] Timeout waiting for listings on page %d.", self.search_name, page_num)
+                    break
 
-                # Scroll to bottom to trigger infinite load
-                self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                time.sleep(self.delay_between_pages + 1.5)  # wait for XHR
-                scroll_round += 1
+                # Parse all loaded cards on this page
+                cards = self.page.query_selector_all("li.result-bukken-list")
+                logger.info("[%s] Page %d: Parsing %d building cards...", self.search_name, page_num, len(cards))
 
-            # Parse all loaded cards
-            cards = self.page.query_selector_all("li.result-bukken-list")
-            logger.info("[%s] Parsing %d building cards...", self.search_name, len(cards))
+                for card in cards:
+                    all_listings.extend(self._parse_building_card(card))
 
-            for card in cards:
-                all_listings.extend(self._parse_building_card(card))
+                # Check if we should stop
+                if page_num >= self.max_pages:
+                    break
+
+                # Find next page URL
+                next_url = None
+                try:
+                    # Nifty pagination has next arrow icon, typically last pagination link
+                    # Or look for any link containing the next page number e.g. /2/
+                    next_links = self.page.query_selector_all(".pager a, .pagination a, a.button.is-outline.is-link-done")
+                    for link in next_links:
+                        href = link.get_attribute("href")
+                        text = link.inner_text().strip()
+                        # If the text is the next page number, or if it's the > arrow (next)
+                        if str(page_num + 1) == text or ">" in text or "次へ" in text:
+                            next_url = _make_absolute(href)
+                            break
+                        
+                        # Fallback: check if the href contains /<page_num+1>/?
+                        if href and f"/{page_num + 1}/?" in href:
+                            next_url = _make_absolute(href)
+                            break
+                except Exception as e:
+                    logger.debug("[%s] Failed to find next page link: %s", self.search_name, e)
+
+                if next_url:
+                    current_url = next_url
+                    page_num += 1
+                    time.sleep(self.delay_between_pages)
+                else:
+                    logger.info("[%s] No next page found after page %d. Reached end.", self.search_name, page_num)
+                    break
 
         except Exception as e:
             logger.error("[%s] Scraping failed: %s", self.search_name, e, exc_info=True)

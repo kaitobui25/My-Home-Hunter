@@ -96,7 +96,7 @@ notifications:
     enabled: true           # Đổi thành true để bật
     bot_token: "8617693255:AAFeIdE1OHnZbnselCI4TYkhp75wkTE9Pbo"
     chat_id: "7480163903"
-    max_per_run: 10          # Gửi tối đa N tin mỗi lần chạy (tránh spam)
+    max_per_run: 100          # Gửi tối đa N tin mỗi lần chạy (tránh spam)
 
   # Discord (giữ lại để dùng sau nếu cần)
   discord:

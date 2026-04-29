@@ -184,6 +184,8 @@ class NiftyRentalHunter(AbstractHunter, PlaywrightBase):
 
         except Exception as e:
             logger.error("[%s] Scraping failed: %s", self.search_name, e, exc_info=True)
+            if "WAF_BLOCK" in str(e):
+                raise
         finally:
             self.close_driver()
 

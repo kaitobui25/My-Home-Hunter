@@ -196,6 +196,48 @@ GNU General Public License v3.0 — xem [LICENSE](LICENSE).
 
 ---
 
+## Local Runner — Chạy Nifty trên máy PC thật (Giải pháp hiện tại)
+
+Do VPS bị Akamai WAF chặn (xem mục 5 bên trên), giải pháp hiện tại là chạy script Nifty ngay trên **máy PC cá nhân** với IP dân cư để vượt WAF tự nhiên.
+
+### Cách chạy
+
+```bash
+# Chạy từ thư mục gốc My-Home-Hunter (trên máy PC thật)
+python -m src.local.run_nifty_local
+
+# Chỉ chạy 1 search cụ thể
+python -m src.local.run_nifty_local --search "Nifty Toyonaka Rental"
+
+# Ẩn cửa sổ browser
+python -m src.local.run_nifty_local --headless
+```
+
+### Kiến trúc
+
+- **File:** `src/local/run_nifty_local.py` — script độc lập, không ảnh hưởng production.
+- **Seen store riêng:** `src/local/seen_listings.json` — tách biệt hoàn toàn với `results/seen_listings/` của VPS. Lần đầu chạy sẽ báo tất cả, các lần sau chỉ báo listing mới phát sinh.
+- **Reset:** Nếu muốn báo lại toàn bộ, xóa file `src/local/seen_listings.json`.
+- **Headless mặc định:** `False` (mở browser thật) để giảm khả năng bị WAF phát hiện.
+
+### Kết quả test thực tế (2026-04-29)
+
+| Metric | Kết quả |
+|--------|---------|
+| Trang scrape | 15 trang liên tiếp |
+| Tổng listings | 438 |
+| Lọc phù hợp | 15 |
+| Telegram gửi | 10/15 (giới hạn `max_per_run`) |
+| Lần bị WAF chặn | 0 |
+
+### Lưu ý vận hành
+
+- Chạy thủ công khi cần (hoặc đặt Task Scheduler trên Windows nếu muốn tự động).
+- Không cần VPS cho Nifty khi dùng giải pháp này.
+- VPS vẫn chạy bình thường cho SUUMO — không bị ảnh hưởng.
+
+---
+
 ## Ghi chú về logic quét dữ liệu (SUUMO)
 
 Trong quá trình phát triển và kiểm thử, chúng tôi đã tối ưu hóa logic để trích xuất dữ liệu chính xác nhất từ cấu trúc phức tạp của SUUMO:

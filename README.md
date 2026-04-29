@@ -148,6 +148,41 @@ Found 3 new matching listing(s)
 
 ---
 
+## Ghi chú tích hợp myhome.nifty.com (Nifty Integration Notes)
+
+Quá trình phân tích và bóc tách dữ liệu từ myhome.nifty.com đòi hỏi các kỹ thuật tinh chỉnh đặc biệt, do Nifty có cấu trúc DOM phức tạp và cơ chế bảo mật (WAF) khắt khe hơn SUUMO. Dưới đây là tài liệu chi tiết:
+
+### 1. Kiến trúc & Tích hợp (Architecture)
+- **Kế thừa Class:** `NiftyRentalHunter` kế thừa từ `AbstractHunter` (để tái sử dụng logic check trùng lặp `seen_listings`) và `PlaywrightBase` (để quản lý instance browser và stealth mode).
+- **Auto-Detection (`src/config.py`):** Lớp `SearchConfig` tự động gán `site = "nifty"` nếu domain của URL chứa `myhome.nifty.com`. Nhờ đó, người dùng có thể pass thẳng URL từ trình duyệt vào file `config.yaml` mà không cần cấu hình type của site thủ công.
+- **Data Mapping Standardization:** Mọi dữ liệu crawl được (Giá, diện tích, tiền cọc, tuổi nhà...) đều trải qua các hàm regex parser (`_parse_man_yen`, `_parse_m2`, `_parse_floor_num`) để chuyển về kiểu dữ liệu chuẩn (như `float`, `int`). Nhờ đó, pipeline Geocoding và Telegram Filter hoạt động trơn tru 100% không cần code riêng cho Nifty.
+
+### 2. Phân tích DOM & CSS Selectors Chi tiết
+Nifty thiết kế DOM dạng bảng lồng ghép phức tạp:
+- **Container Tòa nhà:** `li.result-bukken-list > div.card`.
+- **Thông tin Tòa nhà:** 
+  - Địa chỉ: Quét mảng thẻ `p.text.is-line-height-sm.is-sm` và dùng điều kiện logic kiểm tra sự tồn tại của từ khóa Tỉnh/Thành (VD: `府, 県, 都, 道, 市`) để lấy đúng chuỗi địa chỉ.
+  - Di chuyển (Transport): Lấy toàn bộ thẻ `li[data-transport-access]` và map thành một chuỗi duy nhất cách nhau bởi `|`.
+  - Tuổi nhà: Nằm trong cụm `.bukken-info-items dl`. Tìm thẻ `dt='築年数'`, sau đó lấy giá trị ở `dd` (VD: "40年"). *Edge case: Nifty ghi "40年" thay vì "築40年" như SUUMO, parser phải adapt theo format này.*
+- **Dòng thông tin Phòng (Room Rows):** Nằm trong mảng `tbody.click-area`. Nifty nhóm các phòng của cùng 1 tòa nhà vào các thẻ `tbody` riêng biệt.
+  - Giá thuê/Phí QL: Ở cột `td.bukken-info-rent` chứa 2 thẻ `p`. `p[0]` chứa giá thuê (có chữ `万円`), `p[1]` chứa phí quản lý (chữ `円`).
+  - Tầng/Diện tích: Nằm rải rác ở các `td[data-link-wrap-item]`. Hàm quét text dựa trên keyword ("階", "LDK", "㎡") để định vị chính xác dữ liệu do số lượng cột thay đổi.
+  - Tiền cọc/Lễ: Tìm các block `dl` có `dt` là "敷" (Cọc) và "礼" (Lễ). *Edge cases xử lý: Convert "不要" / "なし" thành 0.0; tự động chia tiền Yên ra Man nếu cần thiết.*
+  - Link chi tiết: Thẻ `a[href*='/detail_']` bên trong `tbody`.
+
+### 3. Logic Phân trang (Pagination)
+- **URL-based Routing:** Nifty không dùng Infinite Scroll mà sử dụng cơ chế phân trang truyền thống trên URL (VD trang 2: `.../toyonakashi_ct/2/?r1=...`).
+- **Thuật toán Next Page:** Thay vì click JS dễ gây lỗi timeout, tool tìm thẻ `a` trong các container `.pager a, .pagination a`. Nó đối chiếu xem nội dung text có chứa `page_num + 1` hoặc thuộc tính `href` có chứa URL pattern `/{page_num + 1}/?` hay không. Nếu có, nó bóc tách absolute URL để gán cho lượt chạy (scroll loop) tiếp theo.
+
+### 4. Vượt rào cản WAF / Anti-Bot (Playwright Stealth)
+Nifty sử dụng bot protection của Akamai / AWS WAF chặn rất gắt các session tự động hóa (hiển thị màn hình lỗi `ただいま込み合っております` chặn request ngay lần đầu). Giải pháp stealth bao gồm:
+1. **Khởi chạy Chromium với Flag:** Truyền `--disable-blink-features=AutomationControlled` để tắt biến cờ automation ở cấp độ Engine browser.
+2. **Xóa dấu vết Webdriver:** Inject đoạn JS tĩnh vào context để gỡ thuộc tính giả lập ở mọi tab: `Object.defineProperty(navigator, 'webdriver', { get: () => undefined });`.
+3. **Fake User-Agent & Headers:** Giả lập Profile trình duyệt như máy thực: `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36`. Set Locale `ja-JP` và Timezone `Asia/Tokyo`.
+4. **Tối ưu tài nguyên mạng:** Sử dụng Interception routing của Playwright (`page.route("**/*")`) để block load ảnh (`.jpg`, `.png`), font chữ và style CSS. Điều này làm trang load cực nhẹ, chống Time-out và giảm tần suất tải file tĩnh, tránh gây sự chú ý với firewall của Nifty.
+
+---
+
 ## License
 
 GNU General Public License v3.0 — xem [LICENSE](LICENSE).

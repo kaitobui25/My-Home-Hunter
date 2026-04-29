@@ -37,6 +37,7 @@ class SearchConfig:
     type: str        # "rental" | "sale"
     url: str
     enabled: bool = True
+    site: str = ""   # "suumo" | "nifty" | … auto-detected from URL if blank
 
 
 @dataclass
@@ -158,11 +159,22 @@ def load_config(path: str = "config.yaml") -> AppConfig:
         if not s.get("url"):
             logger.warning("Search '%s' has no URL, skipping.", s.get("name"))
             continue
+        url = s["url"]
+        # Auto-detect site from URL domain if not explicitly set
+        site = s.get("site", "").lower().strip()
+        if not site:
+            if "suumo.jp" in url:
+                site = "suumo"
+            elif "nifty.com" in url:
+                site = "nifty"
+            else:
+                site = "unknown"
         searches.append(SearchConfig(
             name=s.get("name", "Unnamed"),
             type=s.get("type", "rental").lower(),
-            url=s["url"],
+            url=url,
             enabled=s.get("enabled", True),
+            site=site,
         ))
 
     # Filters

@@ -41,7 +41,17 @@ signal.signal(signal.SIGTERM, _handle_signal)
 # ---------------------------------------------------------------------------
 
 def create_hunter(search: SearchConfig, config: AppConfig):
-    """Factory: return the right hunter for the search type."""
+    """Factory: return the right hunter for the search type and site."""
+    site = search.site  # auto-detected from URL in config.py
+
+    if site == "nifty":
+        if search.type == "rental":
+            from src.scraper.nifty_rental_hunter import NiftyRentalHunter
+            return NiftyRentalHunter(search=search, general=config.general)
+        else:
+            raise ValueError(f"Nifty site only supports 'rental' type, got: '{search.type}'.")
+
+    # Default: SUUMO
     if search.type == "rental":
         from src.scraper.rental_hunter import SUUMORentalHunter
         return SUUMORentalHunter(search=search, general=config.general)

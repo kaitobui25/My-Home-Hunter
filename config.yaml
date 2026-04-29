@@ -33,6 +33,12 @@ searches:
     enabled: true
     url: "https://suumo.jp/jj/chintai/ichiran/FR301FC001/?url=%2Fchintai%2Fichiran%2FFR301FC001%2F&ar=060&bs=040&pc=20&smk=&po1=25&po2=99&shkr1=03&shkr2=03&shkr3=03&shkr4=03&cb=4.0&ct=7.5&md=06&md=07&md=08&md=09&md=10&md=11&md=12&md=13&md=14&et=9999999&mb=30&mt=9999999&cn=30&ra=027&ek=208036610&ek=208018610&rn=2080&ae=20801"
 
+  - name: "Nifty Toyonaka Rental"
+    type: rental
+    enabled: true
+    # site: nifty  # Không cần — tự detect từ URL (myhome.nifty.com)
+    url: "https://myhome.nifty.com/rent/osaka/toyonakashi_ct/?r1=40000&r2=65000&r3=21,22,24,31,32,34,41,42,44,52,54&ex1=1&sort=recommend"
+
   # Ví dụ search thứ 2 (đang tắt)
   # - name: "Tokyo Land Sale"
   #   type: sale

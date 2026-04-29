@@ -181,6 +181,11 @@ Nifty sử dụng bot protection của Akamai / AWS WAF chặn rất gắt các 
 3. **Fake User-Agent & Headers:** Giả lập Profile trình duyệt như máy thực: `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36`. Set Locale `ja-JP` và Timezone `Asia/Tokyo`.
 4. **Tối ưu tài nguyên mạng:** Sử dụng Interception routing của Playwright (`page.route("**/*")`) để block load ảnh (`.jpg`, `.png`), font chữ và style CSS. Điều này làm trang load cực nhẹ, chống Time-out và giảm tần suất tải file tĩnh, tránh gây sự chú ý với firewall của Nifty.
 
+### 5. Kết quả Testing & Báo cáo giới hạn (Akamai WAF)
+- **Tình trạng chặn IP Datacenter:** Akamai WAF của Nifty chặn quyết liệt các dải IP của VPS/Cloud. Ngay cả khi đã áp dụng toàn bộ kỹ thuật Stealth, kết nối từ VPS vẫn sẽ bị Tarpit (treo kết nối cho đến timeout).
+- **Thất bại của phương pháp Hybrid (Cookie Injection):** Việc copy toàn bộ Cookie (đặc biệt là `ak_bmsc`, `bm_sv` của Akamai) từ máy tính cá nhân thật (Local) và bơm vào VPS **không hoạt động** với Nifty. Nguyên nhân cốt lõi là Akamai mã hóa Cookie này và ràng buộc chặt chẽ nó với **Địa chỉ IP gốc** cùng **Chữ ký TLS (JA3 Fingerprint)** của trình duyệt lúc khởi tạo. Khi mang lên VPS, IP và TLS thay đổi, Akamai sẽ phát hiện sự bất thường, lập tức reset DOM và đẩy về trang Captcha, gây ra lỗi Timeout.
+- **Khuyến nghị & Giải pháp:** Không thể dùng các proxy API (như LumiProxy Scraper API) vì chính các API này cũng được bảo vệ bởi Cloudflare và chặn IP tự động. Để hệ thống có thể phân trang và lấy data ổn định trên VPS, bắt buộc phải tích hợp **Proxy Dân Cư (Residential Proxy)** vào thẳng Playwright. Hệ thống cảnh báo qua Telegram hiện tại được giữ lại để thông báo lập tức nếu WAF chặn request, hỗ trợ việc giám sát và cài đặt Proxy sau này.
+
 ---
 
 ## License

@@ -155,6 +155,13 @@ def run_all(config: AppConfig, target_name: str | None = None):
             run_search(search, config, listing_filter, csv_exporter, telegram, geocoder)
         except Exception as e:
             logger.error("Search '%s' failed: %s", search.name, e, exc_info=True)
+            if "WAF_BLOCK" in str(e):
+                msg = (
+                    f"🚨 *CẢNH BÁO: BỊ CHẶN BỞI WAF (NIFTY)*\n"
+                    f"Search: `{search.name}`\n"
+                    f"Cookie đã hết hạn hoặc IP bị chặn. Vui lòng lấy lại Cookie mới ở máy cá nhân và đè vào file `nifty_cookies.json` trên VPS!"
+                )
+                telegram.send_text(msg)
             
         if i < len(searches_to_run) - 1 and not _shutdown:
             delay = config.general.delay_between_searches

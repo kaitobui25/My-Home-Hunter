@@ -80,6 +80,19 @@ class NiftyRentalHunter(AbstractHunter, PlaywrightBase):
         self.context.add_init_script(
             "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
         )
+        
+        # HYBRID APPROACH: Inject cookies from local machine to bypass WAF
+        import os, json
+        cookie_path = os.path.join(os.getcwd(), "nifty_cookies.json")
+        if os.path.exists(cookie_path):
+            try:
+                with open(cookie_path, "r", encoding="utf-8") as f:
+                    cookies = json.load(f)
+                self.context.add_cookies(cookies)
+                logger.info("[%s] Successfully injected %d cookies from nifty_cookies.json", self.search_name, len(cookies))
+            except Exception as e:
+                logger.warning("[%s] Failed to load nifty_cookies.json: %s", self.search_name, e)
+
         self.page = self.context.new_page()
 
         if self.disable_images_css:
@@ -94,14 +107,18 @@ class NiftyRentalHunter(AbstractHunter, PlaywrightBase):
 
         try:
             logger.info("[%s] Navigating to %s", self.search_name, self.start_url)
-            self.page.goto(self.start_url, timeout=self.page_load_timeout, wait_until="domcontentloaded")
+            try:
+                self.page.goto(self.start_url, timeout=self.page_load_timeout, wait_until="domcontentloaded")
+            except Exception as e:
+                if "Timeout" in str(e):
+                    raise Exception("WAF_BLOCK: Lỗi Timeout khi truy cập Nifty. Có thể IP đã bị Tarpit hoặc Cookie hết hạn. Vui lòng cập nhật lại nifty_cookies.json!") from e
+                raise
 
             # Wait for initial listings to appear
             try:
                 self.page.wait_for_selector("li.result-bukken-list", timeout=self.page_load_timeout)
-            except Exception:
-                logger.warning("[%s] Timeout waiting for listings — page may be blocking bots.", self.search_name)
-                return []
+            except Exception as e:
+                raise Exception("WAF_BLOCK: Nifty chặn truy cập (WAF/Captcha). Cookie có thể đã hết hạn. Vui lòng lấy lại Cookie mới và cập nhật nifty_cookies.json!") from e
 
             # Pagination loop: process current page, then find next page link
             page_num = 1

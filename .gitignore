@@ -1,7 +1,11 @@
 screenshot*.png
 page_source*.html
-seen_listings.json
-results
+# Production/VPS seen listings (không cần sync)
+results/seen_listings/
+src/local/seen_listings.json
+
+# results-local/ được TRACK bởi git (sync across PCs)
+# Không ignore results-local/
 .vscode
 __pycache__
 .DS_Store

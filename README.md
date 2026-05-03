@@ -196,45 +196,47 @@ GNU General Public License v3.0 — xem [LICENSE](LICENSE).
 
 ---
 
-## Local Runner — Chạy Nifty trên máy PC thật (Giải pháp hiện tại)
+## Local Runner — Chạy trên máy PC thật (Vượt WAF & Đồng bộ đa thiết bị)
 
-Do VPS bị Akamai WAF chặn (xem mục 5 bên trên), giải pháp hiện tại là chạy script Nifty ngay trên **máy PC cá nhân** với IP dân cư để vượt WAF tự nhiên.
+Do hệ thống chống bot như Akamai WAF chặn quyết liệt địa chỉ IP Datacenter (VPS) của các trang như Nifty, giải pháp được đưa ra là cung cấp một `Local Runner` độc lập. Bạn có thể chạy script này ngay trên **máy tính cá nhân** (với IP dân cư) để vượt qua WAF một cách tự nhiên. File thực thi là `src/local/run_local.py`, hỗ trợ chạy **tất cả** các trang web (SUUMO, Nifty...) có `enabled: true` trong cấu hình.
 
 ### Cách chạy
 
 ```bash
-# Chạy từ thư mục gốc My-Home-Hunter (trên máy PC thật)
-python -m src.local.run_nifty_local
+# Chạy mọi search đang được bật (enabled: true)
+python -m src.local.run_local
 
-# Chỉ chạy 1 search cụ thể
-python -m src.local.run_nifty_local --search "Nifty Toyonaka Rental"
+# Chạy ẩn cửa sổ browser
+python -m src.local.run_local --headless
 
-# Ẩn cửa sổ browser
-python -m src.local.run_nifty_local --headless
+# Chỉ chạy một search cụ thể
+python -m src.local.run_local --search "Toyonaka Rental"
+
+# [MỚI] Reset toàn bộ cờ Telegram để gửi lại tin nhắn cho mọi listing đã lưu
+python -m src.local.run_local --reset-tele
+
+# [MỚI] Lọc lại dữ liệu cũ với config hiện tại mà không mở browser (dùng khi vừa đổi khoảng cách, giá...)
+python -m src.local.run_local --refilter
+
+# [MỚI] Reset và gửi lại Telegram ngay lập tức
+python -m src.local.run_local --reset-tele --refilter
 ```
 
-### Kiến trúc
+### Kiến trúc & Điểm nổi bật
 
-- **File:** `src/local/run_nifty_local.py` — script độc lập, không ảnh hưởng production.
-- **Seen store riêng:** `src/local/seen_listings.json` — tách biệt hoàn toàn với `results/seen_listings/` của VPS. Lần đầu chạy sẽ báo tất cả, các lần sau chỉ báo listing mới phát sinh.
-- **Reset:** Nếu muốn báo lại toàn bộ, xóa file `src/local/seen_listings.json`.
+- **Tự động nhận diện Scraper:** `Local Runner` đọc chung `config.yaml` với VPS. Nó sẽ tự động gọi `SUUMORentalHunter` hoặc `NiftyRentalHunter` tùy theo link bạn nhập, không còn bị giới hạn ở Nifty.
+- **Đồng bộ qua Git (Cross-PC Sync):** 
+  - Lịch sử được lưu tại `results-local/local_seen_listings.json`. 
+  - Thư mục này được **commit thẳng vào Git**. Nhờ đó, khi bạn pull code ở máy khác (VD: Máy công ty -> Máy nhà), trạng thái đã xem sẽ được đồng bộ. Bạn không bị nhận tin nhắn trùng lặp dù đổi máy.
+- **Cơ chế `tele_sent`:** 
+  - Script chỉ đánh dấu hoàn tất một listing khi tin nhắn Telegram gửi đi thành công (`tele_sent = True`).
+  - Những căn bị loại bởi bộ lọc sẽ giữ trạng thái `False`. Nhờ lệnh `--refilter`, nếu bạn nới lỏng điều kiện filter (VD: tăng bán kính km), script sẽ dùng data cũ để lọc lại và gửi thông báo những căn mới lọt lưới, **mà không cần mở trình duyệt scrape lại**.
 - **Headless mặc định:** `False` (mở browser thật) để giảm khả năng bị WAF phát hiện.
-
-### Kết quả test thực tế (2026-04-29)
-
-| Metric | Kết quả |
-|--------|---------|
-| Trang scrape | 15 trang liên tiếp |
-| Tổng listings | 438 |
-| Lọc phù hợp | 15 |
-| Telegram gửi | 10/15 (giới hạn `max_per_run`) |
-| Lần bị WAF chặn | 0 |
 
 ### Lưu ý vận hành
 
-- Chạy thủ công khi cần (hoặc đặt Task Scheduler trên Windows nếu muốn tự động).
-- Không cần VPS cho Nifty khi dùng giải pháp này.
-- VPS vẫn chạy bình thường cho SUUMO — không bị ảnh hưởng.
+- Tính năng chạy Local hỗ trợ cực tốt cho việc Test Cấu hình (`config.yaml`) nhờ khả năng `--refilter` tức thì.
+- Chạy độc lập, không làm ảnh hưởng đến tiến trình chạy nền trên VPS.
 
 ---
 
@@ -283,5 +285,21 @@ Hệ thống đã được nâng cấp mạnh mẽ để chạy ổn định hơ
 ### 3. Bộ nhớ chung (Global Deduplication)
 - **Tránh báo trùng chéo**: Trước đây, nếu 2 link tìm kiếm của bạn có kết quả trùng nhau, bạn sẽ nhận 2 tin nhắn. Giờ đây, hệ thống dùng một file "trí nhớ chung" (`global_seen_listings.json`). Một căn nhà đã báo ở link này sẽ **không bao giờ** bị báo lại ở link khác.
 
-### 4. Cache tọa độ (Geocode Cache)
-- Hệ thống lưu lại tọa độ của các địa chỉ đã dịch vào `results/geocode_cache.json`. Điều này giúp tiết kiệm băng thông, tránh bị khóa IP do gọi API địa lý quá nhiều và tăng tốc độ quét cho các lần sau.
+### 4. Nâng cấp API Bản đồ Chính phủ Nhật Bản (GSI)
+- Hệ thống **đã loại bỏ hoàn toàn Nominatim** (do kém chính xác với địa chỉ Nhật Bản) và chuyển sang sử dụng API của **Quốc Tế Địa Lý Viện Nhật Bản (GSI - msearch)**.
+- Đảm bảo nhận diện chính xác 100% địa chỉ theo chuẩn Nhật, giải quyết hoàn toàn lỗi "Not Found" của các thư viện phương Tây.
+- Tọa độ vẫn được cache vĩnh viễn tại `results/geocode_cache.json` để tăng tốc cực độ và không bị nghẽn mạng.
+
+---
+
+## Các công cụ phụ trợ (Independent Tools)
+
+Ngoài việc crawl nhà, dự án còn cung cấp các công cụ phụ trợ dùng để lọc các tiện ích xung quanh (như Trường mầm non - Hoikuen) nằm gọn trong thư mục `my-data/src/`:
+
+- **`1_extract_geocode.py`**: 
+  - Đọc danh sách địa chỉ (VD: hàng trăm trường mầm non) từ file txt.
+  - Tự động làm sạch chuỗi địa chỉ, loại bỏ tên tòa nhà, và áp dụng thuật toán **"Fallback" thông minh** (tự động cắt lùi dần số nhà nếu quá chi tiết) để luôn luôn quét ra được tọa độ của khu vực.
+  - Xuất toàn bộ ra file `schools_geocoded.json`.
+- **`2_filter_schools.py`**:
+  - Đọc trực tiếp tọa độ nhà (`center_lat`, `center_lng`) và bán kính (`max_distance_km`) từ file `config.yaml` của Home-Hunter.
+  - Rà soát file JSON trên và in thẳng ra Terminal danh sách các trường học nằm trong phạm vi tìm kiếm của bạn, xếp thứ tự từ gần nhất đến xa nhất.

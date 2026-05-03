@@ -9,11 +9,11 @@ import json
 import logging
 import os
 import time
+import urllib.request
+import urllib.parse
 from typing import Tuple, Optional
 
-from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
-from geopy.exc import GeocoderTimedOut, GeocoderServiceError
 
 logger = logging.getLogger(__name__)
 
@@ -22,18 +22,16 @@ class GeocoderService:
     def __init__(self, cache_file: str = "results/geocode_cache.json"):
         self.cache_file = cache_file
         self.cache = self._load_cache()
-        # Use a descriptive user_agent as required by Nominatim
-        self.geolocator = Nominatim(user_agent="home-hunter-suumo-scraper")
-        self.request_delay = 1.1 # Nominatim requires 1 req/sec limit
+        # Delay to be nice to public APIs (GSI doesn't strictly limit, but 1s is safe)
+        self.request_delay = 1.0 
 
     def get_coordinates(self, address: str) -> Tuple[Optional[float], Optional[float]]:
         """Return (lat, lng) for an address, using cache if available."""
         if not address:
             return None, None
 
-        # Clean address a bit for better geocoding (Nominatim can be strict)
+        # Clean address a bit for better geocoding
         # Often SUUMO addresses have building names or floor numbers appended.
-        # We try to use the raw address first.
         clean_addr = address.split(" ")[0].split("\n")[0] # Take first part
         
         if clean_addr in self.cache:
@@ -42,14 +40,23 @@ class GeocoderService:
                 return None, None
             return res[0], res[1]
 
-        logger.info(f"Geocoding new address: {clean_addr}")
+        logger.info(f"Geocoding new address via GSI: {clean_addr}")
         try:
             # Respect rate limit
             time.sleep(self.request_delay)
-            location = self.geolocator.geocode(clean_addr, timeout=10)
             
-            if location:
-                result = (location.latitude, location.longitude)
+            # Use Japanese Government (GSI) msearch API - highly accurate for Japan, free, no keys needed.
+            encoded_addr = urllib.parse.quote(clean_addr)
+            url = f"https://msearch.gsi.go.jp/address-search/AddressSearch?q={encoded_addr}"
+            
+            req = urllib.request.Request(url, headers={'User-Agent': 'home-hunter-bot'})
+            with urllib.request.urlopen(req, timeout=10) as response:
+                data = json.loads(response.read().decode('utf-8'))
+            
+            if data and isinstance(data, list) and len(data) > 0:
+                # GSI returns [lng, lat]
+                coords = data[0]["geometry"]["coordinates"]
+                result = (float(coords[1]), float(coords[0])) # Convert to (lat, lng)
                 self.cache[clean_addr] = result
                 self._save_cache()
                 return result
@@ -59,7 +66,7 @@ class GeocoderService:
                 self._save_cache()
                 return None, None
                 
-        except (GeocoderTimedOut, GeocoderServiceError) as e:
+        except Exception as e:
             logger.error(f"Geocoding error for {clean_addr}: {e}")
             return None, None
 

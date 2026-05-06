@@ -87,6 +87,10 @@ class SUUMORentalHunter(AbstractHunter, PlaywrightBase):
             addr_elem = building.query_selector(".cassetteitem_detail-col1")
             trans_elem = building.query_selector(".cassetteitem_detail-col2")
             
+            # Building age is in col3 of the building details
+            age_elem = building.query_selector(".cassetteitem_detail-col3 div")
+            age_text = age_elem.inner_text().strip() if age_elem else ""
+            
             building_name = title_elem.inner_text().strip() if title_elem else ""
             address = addr_elem.inner_text().strip() if addr_elem else ""
             transportation = trans_elem.inner_text().strip() if trans_elem else ""
@@ -95,13 +99,13 @@ class SUUMORentalHunter(AbstractHunter, PlaywrightBase):
 
         rows = building.query_selector_all("tr.js-cassette_link")
         for row in rows:
-            listing = self._parse_room_row(row, building_name, address, transportation)
+            listing = self._parse_room_row(row, building_name, address, transportation, age_text)
             if listing:
                 results.append(listing)
 
         return results
 
-    def _parse_room_row(self, row, building_name: str, address: str, transportation: str) -> dict | None:
+    def _parse_room_row(self, row, building_name: str, address: str, transportation: str, age_text: str) -> dict | None:
         try:
             floor_elem = row.query_selector("td:nth-child(3)")
             rent_elem = row.query_selector(".cassetteitem_other-emphasis")
@@ -120,13 +124,6 @@ class SUUMORentalHunter(AbstractHunter, PlaywrightBase):
             layout = layout_elem.inner_text().strip() if layout_elem else ""
             size_raw = size_elem.inner_text().strip() if size_elem else ""
             url = url_elem.get_attribute("href") if url_elem else ""
-
-            # Try to get building age
-            try:
-                age_elem = row.query_selector(".cassetteitem_detail-col3 div")
-                age_text = age_elem.inner_text().strip() if age_elem else ""
-            except Exception:
-                age_text = ""
 
             # Try to get image
             image_url = None

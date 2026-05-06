@@ -2,3 +2,4 @@ playwright>=1.40.0
 requests>=2.32.0
 pyyaml>=6.0
 geopy>=2.4.1
+flask>=3.0.0

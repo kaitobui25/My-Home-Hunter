@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Home Hunter — Map Viewer</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"/>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <style>
@@ -20,6 +22,10 @@
       --green: #34d399;
       --orange: #fb923c;
       --red: #f87171;
+      --purple: #c084fc;
+      --purple-border: #a855f7;
+      --cyan: #22d3ee;
+      --cyan-border: #0891b2;
       --text: #e2e8f0;
       --text-muted: #6b7280;
       --text-dim: #94a3b8;
@@ -101,6 +107,19 @@
     .dot.sent { background: var(--green); box-shadow: 0 0 6px var(--green); }
     .dot.unsent { background: var(--orange); box-shadow: 0 0 6px var(--orange); }
     .dot.center { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+    .dot.school { background: var(--purple); box-shadow: 0 0 6px var(--purple); }
+    .dot.ninkagai { background: var(--cyan); box-shadow: 0 0 6px var(--cyan); }
+
+    /* Layer toggle buttons */
+    .layer-group { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+    .layer-btn {
+      padding: 5px 10px; border-radius: 20px; border: 1px solid var(--border);
+      background: var(--surface2); color: var(--text-dim); font-size: 11px;
+      cursor: pointer; transition: all 0.15s; font-family: inherit; white-space: nowrap;
+    }
+    .layer-btn.on-houses { border-color: var(--green); color: var(--green); background: rgba(52,211,153,0.1); }
+    .layer-btn.on-ninka  { border-color: var(--purple); color: var(--purple); background: rgba(192,132,252,0.1); }
+    .layer-btn.on-ninkagai { border-color: var(--cyan); color: var(--cyan); background: rgba(34,211,238,0.1); }
 
     /* Loading overlay */
     #loading {
@@ -137,6 +156,27 @@
     }
     #btn-refresh:hover { opacity: 0.85; }
     #btn-refresh:active { opacity: 0.7; }
+
+    /* ── Marker Cluster (dark theme) ── */
+    .marker-cluster-small div,
+    .marker-cluster-medium div,
+    .marker-cluster-large div {
+      background: rgba(79, 142, 247, 0.75) !important;
+      color: #fff !important;
+      font-weight: 700 !important;
+      font-size: 12px !important;
+      font-family: 'Inter', sans-serif !important;
+    }
+    .marker-cluster-small,
+    .marker-cluster-medium,
+    .marker-cluster-large {
+      background: rgba(79, 142, 247, 0.25) !important;
+    }
+    /* Spider legs */
+    .leaflet-cluster-anim .leaflet-marker-icon,
+    .leaflet-cluster-anim .leaflet-marker-shadow {
+      transition: transform 0.3s ease-out, opacity 0.3s ease-out;
+    }
 
     /* Toggle buttons */
     .toggle-group { display: flex; gap: 6px; margin-top: 8px; }
@@ -213,7 +253,38 @@
       <div class="stat-card orange"><div class="val" id="stat-unsent">—</div><div class="lbl">未通知</div></div>
     </div>
 
-    <div class="section-title" style="margin-top:14px;">表示切替</div>
+    <div class="section-title" style="margin-top:14px;">保育所 (1歳児空き)</div>
+    <div class="stats-grid">
+      <div class="stat-card" style="border-color:rgba(192,132,252,0.3);">
+        <div class="val" id="stat-schools" style="color:var(--purple);">—</div>
+        <div class="lbl">空きあり</div>
+      </div>
+      <div class="stat-card" style="border-color:rgba(192,132,252,0.15);">
+        <div class="val" id="stat-schools-total" style="color:var(--purple);">—</div>
+        <div class="lbl">合計</div>
+      </div>
+    </div>
+
+    <div class="section-title" style="margin-top:14px;">認可外保育所</div>
+    <div class="stats-grid">
+      <div class="stat-card" style="border-color:rgba(34,211,238,0.3);">
+        <div class="val" id="stat-ninkagai" style="color:var(--cyan);">—</div>
+        <div class="lbl">表示数</div>
+      </div>
+      <div class="stat-card" style="border-color:rgba(34,211,238,0.15);">
+        <div class="val" id="stat-ninkagai-total" style="color:var(--cyan);">—</div>
+        <div class="lbl">合計</div>
+      </div>
+    </div>
+
+    <div class="section-title" style="margin-top:14px;">レイヤー表示</div>
+    <div class="layer-group">
+      <button class="layer-btn on-houses" id="layer-houses" onclick="toggleLayer('houses')">🏠 物件</button>
+      <button class="layer-btn on-ninka"  id="layer-ninka"  onclick="toggleLayer('ninka')">🏫 認可</button>
+      <button class="layer-btn on-ninkagai" id="layer-ninkagai" onclick="toggleLayer('ninkagai')">🏢 認可外</button>
+    </div>
+
+    <div class="section-title" style="margin-top:14px;">物件フィルター</div>
     <div class="toggle-group">
       <button class="toggle-btn active" id="tog-all" onclick="setFilter('all')">全て</button>
       <button class="toggle-btn" id="tog-sent" onclick="setFilter('sent')">通知済み</button>
@@ -221,9 +292,11 @@
     </div>
 
     <div class="section-title">凡例</div>
-    <div class="legend-row"><div class="dot sent"></div><span>通知済み (Telegram送信済)</span></div>
-    <div class="legend-row"><div class="dot unsent"></div><span>未通知 (条件一致・未送信)</span></div>
-    <div class="legend-row"><div class="dot center"></div><span>中心点 (神崎川駅)</span></div>
+    <div class="legend-row"><div class="dot sent"></div><span>通知済み物件 (Telegram送信済)</span></div>
+    <div class="legend-row"><div class="dot unsent"></div><span>未通知物件 (条件一致・未送信)</span></div>
+    <div class="legend-row"><div class="dot center"></div><span>中心点</span></div>
+    <div class="legend-row"><div class="dot school"></div><span>認可保育所 (1歳児空きあり)</span></div>
+    <div class="legend-row"><div class="dot ninkagai"></div><span>認可外保育所</span></div>
 
     <div class="section-title">適用フィルター</div>
     <div id="filter-list"></div>
@@ -233,6 +306,7 @@
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 <script>
 // ── Map init ──────────────────────────────────────────────────────────────
 const map = L.map('map', {
@@ -251,20 +325,37 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
 // ── State ─────────────────────────────────────────────────────────────────
 let allListings = [];
 let allMarkers = [];
+let allSchools = [];
+let schoolMarkers = [];
+let allNinkagai = [];
+let ninkagaiMarkers = [];
 let filterMode = 'all';
 let circleLayer = null;
 let centerMarker = null;
 
+// Layer visibility state
+const layerVisible = { houses: true, ninka: true, ninkagai: true };
+
+// MarkerClusterGroup for house listings (enables spiderfying of overlapping markers)
+let markerClusterGroup = null;
+
 // ── Marker helpers ────────────────────────────────────────────────────────
-function markerStyle(listing) {
-  return {
-    radius: 8,
-    fillColor: listing.tele_sent ? '#34d399' : '#fb923c',
-    color: listing.tele_sent ? '#059669' : '#c2410c',
-    weight: 2,
-    opacity: 1,
-    fillOpacity: 0.85,
-  };
+// Creates a DivIcon that looks like a circle — required for MarkerClusterGroup
+function makeHouseIcon(listing) {
+  const fill  = listing.tele_sent ? '#34d399' : '#fb923c';
+  const border = listing.tele_sent ? '#059669' : '#c2410c';
+  const glow  = listing.tele_sent ? 'rgba(52,211,153,0.5)' : 'rgba(251,146,60,0.5)';
+  return L.divIcon({
+    className: '',
+    html: `<div style="
+      width:16px;height:16px;border-radius:50%;
+      background:${fill};border:2px solid ${border};
+      box-shadow:0 0 6px ${glow};
+      "></div>`,
+    iconSize: [16, 16],
+    iconAnchor: [8, 8],
+    popupAnchor: [0, -10],
+  });
 }
 
 function fmt(val, suffix, decimals=1) {
@@ -322,18 +413,177 @@ function buildPopup(l) {
     </div>`;
 }
 
-// ── Render markers ────────────────────────────────────────────────────────
+// ── School marker helpers ────────────────────────────────────────────────
+function schoolMarkerStyle(vacancies) {
+  // Larger = more vacancies
+  const r = Math.min(6 + vacancies * 2, 16);
+  return {
+    radius: r,
+    fillColor: '#c084fc',
+    color: '#7e22ce',
+    weight: 2.5,
+    opacity: 1,
+    fillOpacity: 0.88,
+  };
+}
+
+function buildSchoolPopup(s) {
+  const notesHtml = s.notes
+    ? `<div class="popup-transport" style="margin-top:8px;">${s.notes}</div>` : '';
+  const dateStr = s.scraped_at ? s.scraped_at.substring(0, 10) : '';
+  return `
+    <div class="popup-inner">
+      <div class="popup-name" style="color:#c084fc;">🏫 ${s.name}</div>
+      <div class="popup-price" style="color:#c084fc;font-size:18px;">
+        空き <span style="font-size:28px;font-weight:800;">${s.vacancies}</span> 名
+        <span style="font-size:12px;color:var(--text-muted);"> (1歳児)</span>
+      </div>
+      <div class="popup-grid">
+        <span class="k">住所</span><span class="v" style="font-size:10px;line-height:1.4">${s.address || '—'}</span>
+        ${dateStr ? `<span class="k">更新日</span><span class="v">${dateStr}</span>` : ''}
+      </div>
+      ${notesHtml}
+    </div>
+    <div class="popup-footer">
+      <a class="popup-btn primary" style="background:linear-gradient(135deg,#a855f7,#7c5cbf);" href="https://www.google.com/maps/search/${encodeURIComponent(s.address)}" target="_blank" rel="noopener">Google Maps →</a>
+    </div>`;
+}
+
+function renderSchoolMarkers(schools) {
+  schoolMarkers.forEach(m => map.removeLayer(m));
+  schoolMarkers = [];
+  if (!layerVisible.ninka) return;
+  schools.forEach(s => {
+    const m = L.circleMarker([s.lat, s.lng], schoolMarkerStyle(s.vacancies));
+    m.bindPopup(buildSchoolPopup(s), { maxWidth: 290 });
+    m.on('mouseover', function() { this.openPopup(); });
+    m.bindTooltip(`🏫 ${s.name}`, { permanent: false, direction: 'top' });
+    m.addTo(map);
+    schoolMarkers.push(m);
+  });
+}
+
+// ── Ninkagai marker helpers ────────────────────────────────────────────────
+function ninkagaiMarkerStyle() {
+  return {
+    radius: 7,
+    fillColor: '#22d3ee',
+    color: '#0891b2',
+    weight: 2,
+    opacity: 1,
+    fillOpacity: 0.80,
+  };
+}
+
+function buildNinkagaiPopup(s) {
+  return `
+    <div class="popup-inner">
+      <div class="popup-name" style="color:#22d3ee;">🏢 ${s.name}</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">認可外保育施設</div>
+      <div class="popup-grid">
+        <span class="k">住所</span><span class="v" style="font-size:10px;line-height:1.4">${s.address || '—'}</span>
+      </div>
+    </div>
+    <div class="popup-footer">
+      <a class="popup-btn primary" style="background:linear-gradient(135deg,#22d3ee,#0891b2);" href="https://www.google.com/maps/search/${encodeURIComponent(s.address)}" target="_blank" rel="noopener">Google Maps →</a>
+    </div>`;
+}
+
+function renderNinkagaiMarkers(schools) {
+  ninkagaiMarkers.forEach(m => map.removeLayer(m));
+  ninkagaiMarkers = [];
+  if (!layerVisible.ninkagai) return;
+  schools.forEach(s => {
+    const m = L.circleMarker([s.lat, s.lng], ninkagaiMarkerStyle());
+    m.bindPopup(buildNinkagaiPopup(s), { maxWidth: 270 });
+    m.on('mouseover', function() { this.openPopup(); });
+    m.bindTooltip(`🏢 ${s.name}`, { permanent: false, direction: 'top' });
+    m.addTo(map);
+    ninkagaiMarkers.push(m);
+  });
+}
+
+// ── Layer toggle ───────────────────────────────────────────────────────────
+function toggleLayer(layer) {
+  layerVisible[layer] = !layerVisible[layer];
+  const btn = document.getElementById('layer-' + layer);
+  const classMap = { houses: 'on-houses', ninka: 'on-ninka', ninkagai: 'on-ninkagai' };
+  if (layerVisible[layer]) {
+    btn.classList.add(classMap[layer]);
+  } else {
+    btn.classList.remove(classMap[layer]);
+  }
+  if (layer === 'houses') {
+    if (!layerVisible.houses && markerClusterGroup) {
+      map.removeLayer(markerClusterGroup);
+    } else {
+      setFilter(filterMode);
+    }
+  }
+  if (layer === 'ninka')  renderSchoolMarkers(allSchools);
+  if (layer === 'ninkagai') renderNinkagaiMarkers(allNinkagai);
+}
+
+// ── Render property markers (with Spiderfier clustering) ─────────────────
 function renderMarkers(listings) {
-  allMarkers.forEach(m => map.removeLayer(m));
+  // Remove existing cluster group from map
+  if (markerClusterGroup) {
+    map.removeLayer(markerClusterGroup);
+    markerClusterGroup = null;
+  }
   allMarkers = [];
+  if (!layerVisible.houses) return;
+
+  // Create a fresh cluster group each render
+  markerClusterGroup = L.markerClusterGroup({
+    // Only spiderfy when markers are at the exact same pixel (not nearby)
+    maxClusterRadius: 1,
+    // Spiderfy instead of zoom-in when clicking a cluster
+    spiderfyOnMaxZoom: true,
+    spiderfyDistanceMultiplier: 1.5,
+    zoomToBoundsOnClick: false,
+    showCoverageOnHover: false,
+    // Don't cluster unless markers are truly on top of each other
+    disableClusteringAtZoom: 17,
+    // Custom cluster icon matching dark theme
+    iconCreateFunction: function(cluster) {
+      const count = cluster.getChildCount();
+      // Detect if cluster is all-sent, all-unsent, or mixed
+      const children = cluster.getAllChildMarkers();
+      const allSent = children.every(m => m.options._teleSent);
+      const noneSent = children.every(m => !m.options._teleSent);
+      const fill   = allSent ? '#34d399' : noneSent ? '#fb923c' : '#fbbf24';
+      const border = allSent ? '#059669' : noneSent ? '#c2410c' : '#b45309';
+      const size = count > 9 ? 28 : 22;
+      return L.divIcon({
+        className: '',
+        html: `<div style="
+          width:${size}px;height:${size}px;border-radius:50%;
+          background:${fill};border:2.5px solid ${border};
+          display:flex;align-items:center;justify-content:center;
+          font-size:11px;font-weight:700;color:#0f1117;
+          box-shadow:0 0 8px ${fill}88;
+          font-family:'Inter',sans-serif;
+          ">${count}</div>`,
+        iconSize: [size, size],
+        iconAnchor: [size/2, size/2],
+      });
+    },
+  });
 
   listings.forEach(l => {
-    const m = L.circleMarker([l.lat, l.lng], markerStyle(l));
-    m.bindPopup(buildPopup(l), { maxWidth: 310 });
-    m.on('mouseover', function() { this.openPopup(); });
-    m.addTo(map);
-    allMarkers.push(m);
+    const marker = L.marker([l.lat, l.lng], {
+      icon: makeHouseIcon(l),
+      // Store tele_sent on options so iconCreateFunction can read it
+      _teleSent: l.tele_sent,
+    });
+    marker.bindPopup(buildPopup(l), { maxWidth: 310 });
+    marker.on('mouseover', function() { this.openPopup(); });
+    markerClusterGroup.addLayer(marker);
+    allMarkers.push(marker);
   });
+
+  map.addLayer(markerClusterGroup);
 }
 
 // ── Filter toggle ─────────────────────────────────────────────────────────
@@ -403,17 +653,27 @@ async function loadData() {
   document.getElementById('error-banner').style.display = 'none';
 
   try {
+    // Load property listings
     const res = await fetch('/api/listings');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-
     if (data.error) throw new Error(data.error);
 
     allListings = data.listings || [];
     const stats = data.stats || {};
     const cfg = data.config || {};
 
-    // Update stats
+    // Load school data (ninka)
+    const schoolRes = await fetch('/api/schools');
+    const schoolData = schoolRes.ok ? await schoolRes.json() : { schools: [], stats: {} };
+    allSchools = schoolData.schools || [];
+
+    // Load ninkagai data
+    const ninkagaiRes = await fetch('/api/ninkagai');
+    const ninkagaiData = ninkagaiRes.ok ? await ninkagaiRes.json() : { schools: [], stats: {} };
+    allNinkagai = ninkagaiData.schools || [];
+
+    // Update property stats
     document.getElementById('stat-matched').textContent = stats.matched ?? 0;
     document.getElementById('stat-total').textContent = stats.total_in_db ?? 0;
     const sent = allListings.filter(l => l.tele_sent).length;
@@ -422,6 +682,12 @@ async function loadData() {
     document.getElementById('stat-unsent').textContent = unsent;
     document.getElementById('panel-subtitle').textContent =
       `${allListings.length}件表示 · DB合計${stats.total_in_db}件`;
+
+    // Update school stats
+    document.getElementById('stat-schools').textContent = allSchools.length;
+    document.getElementById('stat-schools-total').textContent = schoolData.stats?.total ?? allSchools.length;
+    document.getElementById('stat-ninkagai').textContent = allNinkagai.length;
+    document.getElementById('stat-ninkagai-total').textContent = ninkagaiData.stats?.total ?? allNinkagai.length;
 
     // Draw center + circle
     drawCenter(cfg);
@@ -440,12 +706,18 @@ async function loadData() {
 
     // Render markers
     setFilter(filterMode);
+    renderSchoolMarkers(allSchools);
+    renderNinkagaiMarkers(allNinkagai);
 
-    // Fit bounds if we have listings
-    if (allListings.length > 0) {
-      const pts = allListings.map(l => [l.lat, l.lng]);
-      if (cfg.center_lat) pts.push([cfg.center_lat, cfg.center_lng]);
-      map.fitBounds(L.latLngBounds(pts).pad(0.1));
+    // Fit bounds to include listings, ninka, and ninkagai
+    const allPts = [
+      ...allListings.map(l => [l.lat, l.lng]),
+      ...allSchools.map(s => [s.lat, s.lng]),
+      ...allNinkagai.map(s => [s.lat, s.lng]),
+    ];
+    if (cfg.center_lat) allPts.push([cfg.center_lat, cfg.center_lng]);
+    if (allPts.length > 0) {
+      map.fitBounds(L.latLngBounds(allPts).pad(0.1));
     }
 
   } catch (err) {

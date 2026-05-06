@@ -13,7 +13,8 @@ Công cụ tự động theo dõi tin đăng bất động sản trên **SUUMO**
 - **Thông báo Telegram**: Chỉ gửi khi có tin mới **phù hợp tiêu chí**
 - **Xuất CSV**: Lưu lại toàn bộ kết quả mỗi lần quét
 - **Tránh thông báo trùng**: Ghi nhớ tin đã thấy qua `seen_listings.json`
-- **Map Viewer** 🗺️: Giao diện bản đồ web (Flask + Leaflet.js) — hiển thị toàn bộ nhà đủ điều kiện trên bản đồ, hover vào chấm tròn để xem chi tiết
+- **Map Viewer** 🗺️: Giao diện bản đồ web (Flask + Leaflet.js) — hiển thị nhà, trường mầm non nhà nước (認可), trường tư (認可外) trên bản đồ với toggle bật/tắt từng lớp và **Spiderfier** tự động tỏa ra các căn trùng tọa độ khi click
+- **Theo dõi chỗ trống trường mầm non** 🏫: Tự động quét danh sách trường có chỗ trống (1歳児), geocode địa chỉ, cập nhật file JSON mỗi lần chạy Local Runner
 
 ---
 
@@ -105,27 +106,35 @@ docker-compose up --build
 
 ```
 home-hunter/
-├── config.yaml              <- Config duy nhất (URL, filter, Telegram, CSV)
+├── config.yaml              <- Config duy nhất (URL, filter, Telegram, CSV, list_schools)
 ├── run.py                   <- Entry point chính (VPS)
 ├── src/
-│   ├── config.py            <- Đọc và validate config.yaml
+│   ├── config.py            <- Đọc và validate config.yaml (hỗ trợ list_schools)
 │   ├── filter.py            <- Lọc listings theo điều kiện
 │   ├── geocoder.py          <- Geocoding địa chỉ → tọa độ (GSI API + cache)
 │   ├── scraper/
 │   │   ├── base.py          <- Lớp cơ sở (Playwright + seen_listings)
 │   │   ├── rental_hunter.py <- Scraper SUUMO thuê nhà
 │   │   ├── nifty_rental_hunter.py <- Scraper Nifty thuê nhà
-│   │   └── sale_hunter.py   <- Scraper SUUMO mua bán
+│   │   ├── sale_hunter.py   <- Scraper SUUMO mua bán
+│   │   └── school_vacancy_hunter.py <- Scraper chỗ trống trường mầm non (認可)
 │   ├── notifier/
 │   │   └── telegram.py      <- Gửi thông báo Telegram
 │   ├── exporter/
 │   │   └── csv_exporter.py  <- Xuất ra CSV
 │   ├── local/
-│   │   └── run_local.py     <- Local Runner (chạy trên PC thật, vượt WAF)
+│   │   └── run_local.py     <- Local Runner (chạy PC thật, vượt WAF + quét trường mầm non)
 │   └── web/
-│       ├── app.py           <- Flask server — Map Viewer
+│       ├── app.py           <- Flask server — Map Viewer (/api/listings, /api/schools, /api/ninkagai)
 │       └── templates/
-│           └── map.html     <- Leaflet.js interactive map UI
+│           └── map.html     <- Leaflet.js map UI (3 layer: nhà / 認可 / 認可外 + toggle)
+├── my-data/
+│   └── hoikuen/
+│       ├── ninka/
+│       │   ├── yodogawa_vacancies_1yo_20260501.json <- Trường 認可 có chỗ trống (auto-updated)
+│       │   └── school_addresses.json  <- Mapping tên trường → địa chỉ
+│       └── ninkagai/
+│           └── ninkagai_geocoded.json <- Danh sách trường 認可外 + tọa độ
 ├── results-local/
 │   └── local_seen_listings.json  <- DB local (git-tracked, sync đa PC)
 └── results/
@@ -254,7 +263,7 @@ python -m src.local.run_local --reset-tele --refilter
 
 ## Map Viewer — Bản đồ trực quan 🗺️
 
-Giao diện web **Flask + Leaflet.js** cho phép xem toàn bộ nhà đã scrape và đủ điều kiện hiển thị trên bản đồ tương tác. Không cần API key, không cần cấu hình thêm.
+Giao diện web **Flask + Leaflet.js** cho phép xem toàn bộ nhà đã scrape, trường mầm non nhà nước (認可) và trường tư/doanh nghiệp (認可外) trên bản đồ tương tác. Không cần API key, không cần cấu hình thêm.
 
 ### Cách chạy
 
@@ -269,21 +278,79 @@ python -m src.web.app
 ### Tính năng
 
 - **Bản đồ dark-theme** dùng CartoDB Dark Matter tile (miễn phí, không cần API key)
-- **Chấm tròn màu** trên bản đồ:
-  - 🟢 **Xanh lá**: Đã gửi Telegram (`tele_sent = true`)
-  - 🟠 **Cam**: Đủ điều kiện nhưng chưa gửi (`tele_sent = false`)
-  - 🔵 **Xanh dương**: Điểm trung tâm (ví dụ: ga 神崎川)
-- **Hover vào chấm** → popup hiện ngay: tên nhà, giá thuê, sơ đồ, diện tích, tầng, tuổi nhà, khoảng cách, giao thông, link chi tiết
-- **Vòng tròn bán kính** (`max_distance_km` từ config.yaml) hiển thị vùng lọc
-- **Panel trái** hiển thị: thống kê (số khớp/tổng DB), filter đang áp dụng, toggle hiện/ẩn theo trạng thái
-- **Nút "データ更新"**: Reload dữ liệu mới nhất mà không cần restart server
+- **Marker Spiderfier** — dùng `Leaflet.markercluster`:
+  - Nhiều căn trong cùng tòa nhà (cùng tọa độ) được gộp thành **cluster bubble** hiển thị số đếm
+  - Màu cluster: 🟢 xanh (toàn đã gửi), 🟠 cam (toàn chưa gửi), 🟡 vàng (hỗn hợp)
+  - Click cluster → các căn **tỏa ra dạng nhện (spider)** → click riêng từng căn để xem popup
+  - Zoom ≥ 17: tự động tắt cluster, hiện từng chấm riêng
+- **Marker theo 4 loại màu sắc**:
+  - 🟢 **Xanh lá**: Nhà đã gửi Telegram (`tele_sent = true`)
+  - 🟠 **Cam**: Nhà đủ điều kiện nhưng chưa gửi (`tele_sent = false`)
+  - 🔵 **Xanh dương**: Điểm trung tâm (ga 神崎川...)
+  - 🟣 **Tím** `#c084fc`: Trường 認可保育所 có chỗ trống lớp 1 tuổi (kích thước tỉ lệ số chỗ)
+  - 🩵 **Cyan** `#22d3ee`: Trường 認可外保育所 (tư nhân/doanh nghiệp)
+- **Toggle Layer** (bật/tắt từng lớp):
+  - 🏠 物件 → Ẩn/hiện toàn bộ marker nhà
+  - 🏫 認可 → Ẩn/hiện marker trường nhà nước
+  - 🏢 認可外 → Ẩn/hiện marker trường tư/doanh nghiệp
+- **Hover vào marker nhà** → popup: tên, giá thuê, sơ đồ, diện tích, tầng, tuổi nhà, khoảng cách, giao thông, link chi tiết
+- **Hover vào marker trường** → popup: tên, số chỗ trống, địa chỉ, link Google Maps
+- **Vòng tròn bán kính** (`max_distance_km` từ config.yaml)
+- **Panel trái** hiển thị: thống kê nhà + trường 認可 + trường 認可外, filter đang áp dụng, legend, nút làm mới
+- **Nút "データ更新"**: Reload dữ liệu mới nhất không cần restart server
+
+### API Endpoints
+
+| Endpoint | Mô tả |
+|:---------|:------|
+| `GET /api/listings` | Danh sách nhà đã lọc theo config.yaml (có tọa độ) |
+| `GET /api/schools` | Trường 認可保育所 có chỗ trống lớp 1 tuổi |
+| `GET /api/ninkagai` | Toàn bộ trường 認可外保育所 có tọa độ |
 
 ### Nguyên lý hoạt động
 
 - Đọc `results-local/local_seen_listings.json` (tracking DB)
 - Resolve tọa độ từ **`results/geocode_cache.json`** (offline, không gọi API thêm)
 - Áp dụng **đúng filter logic** như `ListingFilter` trong `src/filter.py` — nhất quán 100% với production
-- Expose qua API `GET /api/listings` → frontend Leaflet.js render bản đồ
+- Đọc trực tiếp `my-data/hoikuen/ninka/yodogawa_vacancies_1yo_20260501.json` và `my-data/hoikuen/ninkagai/ninkagai_geocoded.json` cho dữ liệu trường học
+
+---
+
+## Theo dõi chỗ trống trường mầm non 🏫
+
+Mỗi lần chạy `Local Runner`, hệ thống **tự động** quét trang web của Quận (ví dụ: Yodogawa-ku) để lấy danh sách trường 認可保育所 còn chỗ trống cho lớp 1 tuổi, geocode địa chỉ và cập nhật file JSON.
+
+### Cấu hình trong `config.yaml`
+
+```yaml
+list_schools:
+  - name: "yodogawa ku ninka"
+    type: ninka
+    class: 1-year        # Target class (1-year = 1歳児)
+    enabled: true
+    url: "https://www.city.osaka.lg.jp/yodogawa/page/0000230131.html"
+```
+
+### Quy trình tự động
+
+1. Mỗi lần chạy `python -m src.local.run_local`
+2. Sau khi hoàn tất quét nhà, script tự động mở trang city.osaka.lg.jp tương ứng
+3. Tìm bảng dữ liệu chỗ trống → lọc cột `1歳児` → lấy tên trường có số > 0
+4. Tra địa chỉ từ `school_addresses.json` (mapping tên → địa chỉ)
+5. Geocode địa chỉ bằng GSI API (fallback: lược bỏ tên tòa nhà)
+6. Cập nhật file `yodogawa_vacancies_1yo_20260501.json` với tọa độ mới nhất
+
+### Thêm địa chỉ trường mới
+
+Khi website thành phố thêm trường mới chưa có trong `school_addresses.json`, chỉ cần bổ sung thủ công:
+
+```json
+// my-data/hoikuen/ninka/school_addresses.json
+{
+  "新しい保育園": "大阪府大阪市淀川区...",
+  ...
+}
+```
 
 ---
 

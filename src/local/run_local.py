@@ -60,6 +60,7 @@ from src.config import load_config, AppConfig, SearchConfig
 from src.filter import ListingFilter
 from src.notifier.telegram import TelegramNotifier
 from src.geocoder import GeocoderService
+from src.scraper.school_vacancy_hunter import SchoolVacancyHunter
 
 # ── Logging ─────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -452,6 +453,36 @@ def run_all(config: AppConfig, target_name: str | None, headless: bool) -> None:
                 time.sleep(delay)
 
     logger.info("All local searches completed. Total seen (cumulative): %d", len(seen))
+
+    # ── Part 2: School vacancy searches ─────────────────────────────────────
+    if config.list_schools:
+        active_schools = [s for s in config.list_schools if s.enabled]
+        if active_schools:
+            logger.info("Running %d school vacancy search(es) locally", len(active_schools))
+            for school_search in active_schools:
+                try:
+                    hunter = SchoolVacancyHunter(
+                        search=school_search,
+                        general=config.general,
+                        geocoder=geocoder
+                    )
+                    results = hunter.scrape_vacancies()
+                    if results:
+                        # Map to output file path (fixed for now as requested)
+                        # We can make this dynamic if needed
+                        output_path = os.path.join(
+                            _PROJECT_ROOT, "my-data", "hoikuen", "ninka", 
+                            "yodogawa_vacancies_1yo_20260501.json"
+                        )
+                        addr_map_path = os.path.join(
+                            _PROJECT_ROOT, "my-data", "hoikuen", "ninka", 
+                            "school_addresses.json"
+                        )
+                        hunter.update_json(results, output_path, addr_map_path)
+                    else:
+                        logger.info("[%s] No vacancies found or scrape empty.", school_search.name)
+                except Exception as e:
+                    logger.error("School search [%s] failed: %s", school_search.name, e)
 
 
 # ── Entry point ──────────────────────────────────────────────────────────────

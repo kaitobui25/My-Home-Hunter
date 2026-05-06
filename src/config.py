@@ -41,6 +41,15 @@ class SearchConfig:
 
 
 @dataclass
+class SchoolSearchConfig:
+    name: str
+    type: str        # "ninka" | "ninkagai" | etc.
+    url: str
+    enabled: bool = True
+    target_class: str = "1-year"  # Default to 1-year old
+
+
+@dataclass
 class RentalFilterConfig:
     max_rent_man_yen: Optional[float] = None
     max_admin_fee_yen: Optional[float] = None
@@ -114,6 +123,7 @@ class AppConfig:
     filters: FiltersConfig
     notifications: NotificationsConfig
     export: ExportConfig
+    list_schools: List[SchoolSearchConfig] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +187,19 @@ def load_config(path: str = "config.yaml") -> AppConfig:
             site=site,
         ))
 
+    # School Searches
+    school_searches = []
+    for s in raw.get("list_schools", []):
+        if not s.get("url"):
+            continue
+        school_searches.append(SchoolSearchConfig(
+            name=s.get("name", "Unnamed School Search"),
+            type=s.get("type", "ninka"),
+            url=s["url"],
+            enabled=s.get("enabled", True),
+            target_class=s.get("class", "1-year"),
+        ))
+
     # Filters
     fraw = raw.get("filters", {})
     rraw = fraw.get("rental", {})
@@ -238,6 +261,7 @@ def load_config(path: str = "config.yaml") -> AppConfig:
     config = AppConfig(
         general=general,
         searches=searches,
+        list_schools=school_searches,
         filters=filters,
         notifications=notifications,
         export=export,

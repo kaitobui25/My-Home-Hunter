@@ -74,7 +74,7 @@ filters:
     center_lat: 34.7241
     center_lng: 135.47399
     # Bán kính tối đa (km)
-    max_distance_km: 2.0
+    max_distance_km: 1.0
 
   # --- Chỉ áp dụng cho rental (thuê nhà) ---
   rental:
@@ -125,3 +125,15 @@ export:
     filename: "{name}_{date}.csv"
     # append_mode: true = thêm vào file cũ, false = tạo file mới mỗi lần
     append_mode: true
+
+
+# ============================================================
+# DANH SÁCH trường mẫu giáo
+# enabled: true/false để bật/tắt từng search không cần xóa
+# ============================================================
+list_schools:
+  - name: "yodogawa ku ninka"
+    type: ninka
+    class: 1-year
+    enabled: true
+    url: "https://www.city.osaka.lg.jp/yodogawa/page/0000230131.html"

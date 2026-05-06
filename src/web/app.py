@@ -38,6 +38,8 @@ app = Flask(__name__, template_folder="templates")
 LOCAL_SEEN_FILE = os.path.join(_PROJECT_ROOT, "results-local", "local_seen_listings.json")
 GEOCODE_CACHE_FILE = os.path.join(_PROJECT_ROOT, "results", "geocode_cache.json")
 CONFIG_FILE = os.path.join(_PROJECT_ROOT, "config.yaml")
+SCHOOL_DATA_FILE = os.path.join(_PROJECT_ROOT, "my-data", "hoikuen", "ninka", "yodogawa_vacancies_1yo_20260501.json")
+NINKAGAI_DATA_FILE = os.path.join(_PROJECT_ROOT, "my-data", "hoikuen", "ninkagai", "ninkagai_geocoded.json")
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -196,9 +198,42 @@ def api_listings():
                 "search_name": entry.get("search_name", ""),
             })
 
+        # ── Deduplicate by property name: prefer Nifty over SUUMO ──────────
+        # When the same 物件名 appears in both sources, keep only the Nifty
+        # version — it carries richer data (floor plan detail, etc.).
+        def _is_nifty(url: str) -> bool:
+            return "nifty.com" in (url or "")
+
+        # Pass 1: for each name, pick the best source (Nifty wins over SUUMO)
+        name_to_best: dict = {}
+        for item in results:
+            name = (item.get("name") or "").strip()
+            if not name or name == "物件名不明":
+                continue
+            if name not in name_to_best:
+                name_to_best[name] = item
+            elif not _is_nifty(name_to_best[name]["url"]) and _is_nifty(item["url"]):
+                name_to_best[name] = item  # upgrade to Nifty
+
+        # Pass 2: rebuild results emitting only the best item per name
+        seen_names: set = set()
+        deduped: list = []
+        for item in results:
+            name = (item.get("name") or "").strip()
+            if not name or name == "物件名不明":
+                deduped.append(item)   # nameless: always keep
+                continue
+            if name in seen_names:
+                continue               # duplicate name: skip
+            seen_names.add(name)
+            deduped.append(name_to_best[name])  # emit the winner (may differ from item)
+
+        count_deduped = len(results) - len(deduped)
+        results = deduped
+
         logger.info(
-            "API /listings → total_db=%d | matched=%d | no_data=%d | no_coords=%d | filtered=%d",
-            len(seen_data), len(results), count_no_data, count_no_coords, count_filtered,
+            "API /listings → total_db=%d | matched=%d | deduped=%d | no_data=%d | no_coords=%d | filtered=%d",
+            len(seen_data), len(results), count_deduped, count_no_data, count_no_coords, count_filtered,
         )
 
         return jsonify({
@@ -229,6 +264,82 @@ def api_listings():
     except Exception as e:
         logger.exception("Unexpected error in /api/listings")
         return jsonify({"error": str(e), "listings": [], "stats": {}, "config": {}}), 500
+
+
+@app.route("/api/schools")
+def api_schools():
+    """
+    Returns nursery school vacancy data for map display.
+    Only schools that have lat/lng coordinates are returned.
+    """
+    try:
+        if not os.path.exists(SCHOOL_DATA_FILE):
+            return jsonify({"schools": [], "stats": {"total": 0, "with_coords": 0}})
+
+        with open(SCHOOL_DATA_FILE, "r", encoding="utf-8") as f:
+            raw: list = json.load(f)
+
+        schools = []
+        for s in raw:
+            lat = s.get("lat")
+            lng = s.get("lng")
+            if lat is None or lng is None:
+                continue
+            schools.append({
+                "name": s.get("school_name", "不明"),
+                "address": s.get("address", ""),
+                "lat": lat,
+                "lng": lng,
+                "vacancies": s.get("vacancies_1_year", 0),
+                "notes": s.get("notes", ""),
+                "scraped_at": s.get("scraped_at", ""),
+            })
+
+        logger.info("API /schools → %d schools with coords (of %d total)", len(schools), len(raw))
+        return jsonify({
+            "schools": schools,
+            "stats": {"total": len(raw), "with_coords": len(schools)},
+        })
+
+    except Exception as e:
+        logger.exception("Error in /api/schools")
+        return jsonify({"error": str(e), "schools": []}), 500
+
+
+@app.route("/api/ninkagai")
+def api_ninkagai():
+    """
+    Returns non-accredited nursery school (ninkagai) location data for map display.
+    """
+    try:
+        if not os.path.exists(NINKAGAI_DATA_FILE):
+            return jsonify({"schools": [], "stats": {"total": 0}})
+
+        with open(NINKAGAI_DATA_FILE, "r", encoding="utf-8") as f:
+            raw: list = json.load(f)
+
+        schools = []
+        for s in raw:
+            lat = s.get("lat")
+            lng = s.get("lng")
+            if lat is None or lng is None:
+                continue
+            schools.append({
+                "name": s.get("name", "不明"),
+                "address": s.get("address", ""),
+                "lat": lat,
+                "lng": lng,
+            })
+
+        logger.info("API /ninkagai → %d schools", len(schools))
+        return jsonify({
+            "schools": schools,
+            "stats": {"total": len(raw), "with_coords": len(schools)},
+        })
+
+    except Exception as e:
+        logger.exception("Error in /api/ninkagai")
+        return jsonify({"error": str(e), "schools": []}), 500
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

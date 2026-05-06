@@ -13,6 +13,7 @@ Công cụ tự động theo dõi tin đăng bất động sản trên **SUUMO**
 - **Thông báo Telegram**: Chỉ gửi khi có tin mới **phù hợp tiêu chí**
 - **Xuất CSV**: Lưu lại toàn bộ kết quả mỗi lần quét
 - **Tránh thông báo trùng**: Ghi nhớ tin đã thấy qua `seen_listings.json`
+- **Map Viewer** 🗺️: Giao diện bản đồ web (Flask + Leaflet.js) — hiển thị toàn bộ nhà đủ điều kiện trên bản đồ, hover vào chấm tròn để xem chi tiết
 
 ---
 
@@ -104,22 +105,33 @@ docker-compose up --build
 
 ```
 home-hunter/
-├── config.yaml          <- Config duy nhất (URL, filter, Telegram, CSV)
-├── run.py               <- Entry point chính
+├── config.yaml              <- Config duy nhất (URL, filter, Telegram, CSV)
+├── run.py                   <- Entry point chính (VPS)
 ├── src/
-│   ├── config.py        <- Đọc và validate config.yaml
-│   ├── filter.py        <- Lọc listings theo điều kiện
+│   ├── config.py            <- Đọc và validate config.yaml
+│   ├── filter.py            <- Lọc listings theo điều kiện
+│   ├── geocoder.py          <- Geocoding địa chỉ → tọa độ (GSI API + cache)
 │   ├── scraper/
-│   │   ├── base.py      <- Lớp cơ sở (WebDriver + seen_listings)
-│   │   ├── rental_hunter.py  <- Scraper cho thuê nhà (chintai)
-│   │   └── sale_hunter.py    <- Scraper cho mua bán (bukken)
+│   │   ├── base.py          <- Lớp cơ sở (Playwright + seen_listings)
+│   │   ├── rental_hunter.py <- Scraper SUUMO thuê nhà
+│   │   ├── nifty_rental_hunter.py <- Scraper Nifty thuê nhà
+│   │   └── sale_hunter.py   <- Scraper SUUMO mua bán
 │   ├── notifier/
-│   │   └── telegram.py  <- Gửi thông báo Telegram
-│   └── exporter/
-│       └── csv_exporter.py   <- Xuất ra CSV
+│   │   └── telegram.py      <- Gửi thông báo Telegram
+│   ├── exporter/
+│   │   └── csv_exporter.py  <- Xuất ra CSV
+│   ├── local/
+│   │   └── run_local.py     <- Local Runner (chạy trên PC thật, vượt WAF)
+│   └── web/
+│       ├── app.py           <- Flask server — Map Viewer
+│       └── templates/
+│           └── map.html     <- Leaflet.js interactive map UI
+├── results-local/
+│   └── local_seen_listings.json  <- DB local (git-tracked, sync đa PC)
 └── results/
-    ├── csv/             <- File CSV kết quả mỗi ngày
-    └── seen_listings/   <- Lịch sử tin đã thấy (JSON)
+    ├── csv/                 <- File CSV kết quả mỗi ngày
+    ├── geocode_cache.json   <- Cache tọa độ (tránh gọi API trùng lặp)
+    └── seen_listings/       <- Lịch sử tin đã thấy - VPS (JSON)
 ```
 
 ---
@@ -237,6 +249,41 @@ python -m src.local.run_local --reset-tele --refilter
 
 - Tính năng chạy Local hỗ trợ cực tốt cho việc Test Cấu hình (`config.yaml`) nhờ khả năng `--refilter` tức thì.
 - Chạy độc lập, không làm ảnh hưởng đến tiến trình chạy nền trên VPS.
+
+---
+
+## Map Viewer — Bản đồ trực quan 🗺️
+
+Giao diện web **Flask + Leaflet.js** cho phép xem toàn bộ nhà đã scrape và đủ điều kiện hiển thị trên bản đồ tương tác. Không cần API key, không cần cấu hình thêm.
+
+### Cách chạy
+
+```bash
+# Từ thư mục gốc My-Home-Hunter
+python -m src.web.app
+
+# Mở trình duyệt:
+# http://localhost:5001
+```
+
+### Tính năng
+
+- **Bản đồ dark-theme** dùng CartoDB Dark Matter tile (miễn phí, không cần API key)
+- **Chấm tròn màu** trên bản đồ:
+  - 🟢 **Xanh lá**: Đã gửi Telegram (`tele_sent = true`)
+  - 🟠 **Cam**: Đủ điều kiện nhưng chưa gửi (`tele_sent = false`)
+  - 🔵 **Xanh dương**: Điểm trung tâm (ví dụ: ga 神崎川)
+- **Hover vào chấm** → popup hiện ngay: tên nhà, giá thuê, sơ đồ, diện tích, tầng, tuổi nhà, khoảng cách, giao thông, link chi tiết
+- **Vòng tròn bán kính** (`max_distance_km` từ config.yaml) hiển thị vùng lọc
+- **Panel trái** hiển thị: thống kê (số khớp/tổng DB), filter đang áp dụng, toggle hiện/ẩn theo trạng thái
+- **Nút "データ更新"**: Reload dữ liệu mới nhất mà không cần restart server
+
+### Nguyên lý hoạt động
+
+- Đọc `results-local/local_seen_listings.json` (tracking DB)
+- Resolve tọa độ từ **`results/geocode_cache.json`** (offline, không gọi API thêm)
+- Áp dụng **đúng filter logic** như `ListingFilter` trong `src/filter.py` — nhất quán 100% với production
+- Expose qua API `GET /api/listings` → frontend Leaflet.js render bản đồ
 
 ---
 

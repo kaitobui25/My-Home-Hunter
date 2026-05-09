@@ -50,6 +50,7 @@ import os
 import sys
 import time
 from datetime import datetime
+from urllib.parse import urlparse, urlunparse
 
 # ── Ensure project root is on the path khi chạy trực tiếp ──────────────────
 _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -79,7 +80,22 @@ RESULTS_LOCAL_DIR = os.path.join(_PROJECT_ROOT_ALIAS, "results-local")
 LOCAL_SEEN_FILE = os.path.join(RESULTS_LOCAL_DIR, "local_seen_listings.json")
 
 
-# ── Seen-listings helpers ──────────────────────────────────────────────────────────────────
+# ── URL helpers ──────────────────────────────────────────────────────────────
+
+def _canonical_url(url: str) -> str:
+    """
+    Strip session/tracking query parameters so URLs from different scrape runs
+    can be compared reliably.
+
+    Example: SUUMO appends ?bc=XXXXXXXXXX which rotates every session.
+      https://suumo.jp/chintai/jnc_123/?bc=111  ←→  https://suumo.jp/chintai/jnc_123/?bc=999
+    Both refer to the same listing — stripping the query string makes them equal.
+    """
+    parsed = urlparse(url or "")
+    return urlunparse(parsed._replace(query="", fragment=""))
+
+
+# ── Seen-listings helpers ─────────────────────────────────────────────────────
 
 def _load_local_seen() -> dict:
     """
@@ -211,8 +227,15 @@ def run_local_search(
     finally:
         config.general.headless = original_headless
 
-    # ── Deduplicate: chỉ xử lý listing chưa từng scrape được ──────────────────────────
+    # Compute canonical URL set for the delist pass in run_all().
+    # Empty = scrape likely failed, run_all() will skip delist for this site.
+    canonical_scraped: set[str] = {
+        _canonical_url(l["url"]) for l in all_listings if l.get("url")
+    }
+
+    # ── Deduplicate: chỉ xử lý listing chưa từng scrape được ────────────────
     new_listings = [l for l in all_listings if l.get("url") and l["url"] not in seen]
+
 
     logger.info(
         "[%s] Result: %d total | %d new",
@@ -282,7 +305,7 @@ def run_local_search(
             listing["search_name"] = search.name  # persist để --refilter dùng được
             _mark_as_seen(seen, listing, tele_sent=False)
 
-    return seen
+    return seen, canonical_scraped
 
 
 def reset_tele_sent(seen: dict, search_names: list | None = None) -> dict:
@@ -434,8 +457,11 @@ def run_all(config: AppConfig, target_name: str | None, headless: bool) -> None:
 
     logger.info("Running %d search(es) locally (headless=%s)", len(active_searches), headless)
 
+    # Per-site canonical URLs collected across ALL searches (for delist pass)
+    site_canonical: dict[str, set] = {}  # e.g. {"suumo": {url1, url2}, "nifty": {...}}
+
     for i, search in enumerate(active_searches):
-        seen = run_local_search(
+        seen, canonical_urls = run_local_search(
             search=search,
             config=config,
             seen=seen,
@@ -444,6 +470,11 @@ def run_all(config: AppConfig, target_name: str | None, headless: bool) -> None:
             geocoder=geocoder,
             headless=headless,
         )
+        # Accumulate canonical URLs per site (only when scrape returned results)
+        if canonical_urls:
+            sk = search.site or "suumo"
+            site_canonical.setdefault(sk, set()).update(canonical_urls)
+
         _save_local_seen(seen)
 
         if i < len(active_searches) - 1:
@@ -453,6 +484,36 @@ def run_all(config: AppConfig, target_name: str | None, headless: bool) -> None:
                 time.sleep(delay)
 
     logger.info("All local searches completed. Total seen (cumulative): %d", len(seen))
+
+    # ── Delist pass: compare ALL scraped URLs per site vs DB ────────────────────
+    # Runs once after ALL searches so a listing found in any search for that
+    # site is NOT delisted, even if it didn't appear in every search.
+    def _url_site(url: str) -> str | None:
+        if "nifty.com" in url:  return "nifty"
+        if "suumo.jp"  in url:  return "suumo"
+        return None
+
+    if site_canonical:
+        now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S+00:00")
+        count_dl = 0
+        for url, entry in seen.items():
+            sk = _url_site(url)
+            if not sk or sk not in site_canonical:
+                continue  # site not scraped this run — don't touch
+            if _canonical_url(url) in site_canonical[sk]:
+                if entry.get("delisted"):
+                    entry["delisted"] = False
+                    entry["delisted_at"] = None
+                    logger.info("Re-listed (restored): %s", entry.get("name", url))
+            else:
+                if not entry.get("delisted"):
+                    entry["delisted"] = True
+                    entry["delisted_at"] = now_iso
+                    count_dl += 1
+                    logger.debug("Delisting: %s", entry.get("name", url))
+        if count_dl:
+            logger.info("Delist pass: marked %d listing(s) as gone from site.", count_dl)
+        _save_local_seen(seen)
 
     # ── Part 2: School vacancy searches ─────────────────────────────────────
     if config.list_schools:

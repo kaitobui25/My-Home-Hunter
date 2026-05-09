@@ -19,9 +19,12 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
+import subprocess
 import sys
+import threading
 
-from flask import Flask, jsonify, render_template
+from flask import Flask, jsonify, render_template, request
 
 # ── Ensure project root is on the path ──────────────────────────────────────
 _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -135,15 +138,21 @@ def api_listings():
 
         # ── Process each entry ──────────────────────────────────────────────
         results = []
-        count_no_data = 0      # Migrated/empty entries without listing fields
-        count_no_coords = 0    # Has data but address not in geocode cache
-        count_filtered = 0     # Has coords but fails ListingFilter or location filter
+        count_no_data    = 0   # Migrated/empty entries without listing fields
+        count_no_coords  = 0   # Has data but address not in geocode cache
+        count_filtered   = 0   # Has coords but fails ListingFilter or location filter
+        count_delisted   = 0   # Removed from source site (marked by run_local)
 
         for url, entry in seen_data.items():
             # Skip legacy migrated entries with no listing data
             # A real listing entry has at least "address" or "name" from the scraper
             if not entry.get("address") and not entry.get("name"):
                 count_no_data += 1
+                continue
+
+            # Skip listings that run_local confirmed are no longer on the source site
+            if entry.get("delisted"):
+                count_delisted += 1
                 continue
 
             # Resolve coordinates from geocode cache
@@ -231,9 +240,51 @@ def api_listings():
         count_deduped = len(results) - len(deduped)
         results = deduped
 
+        # ── Pass 3: spatial + price fingerprint dedup ──────────────────────
+        # Listings at the exact same geocoded coordinates with identical
+        # (price_man_yen, admin_fee_yen, size_m2) are almost certainly the
+        # same unit listed by multiple portals.  Keep only the best source
+        # (Nifty wins; within the same source, first seen wins).
+        def _fp(item: dict) -> tuple:
+            """Fingerprint: (lat_rounded, lng_rounded, price, admin_fee, size)."""
+            return (
+                round(item["lat"],  5),   # ~1 m precision
+                round(item["lng"],  5),
+                item.get("price_man_yen"),
+                item.get("admin_fee_yen"),
+                item.get("size_m2"),
+            )
+
+        fp_to_best: dict = {}
+        for item in results:
+            fp = _fp(item)
+            # Ignore fingerprints where key fields are all None (unscrapable data)
+            if fp[2] is None and fp[4] is None:
+                continue
+            if fp not in fp_to_best:
+                fp_to_best[fp] = item
+            elif not _is_nifty(fp_to_best[fp]["url"]) and _is_nifty(item["url"]):
+                fp_to_best[fp] = item   # upgrade to Nifty
+
+        seen_fps: set = set()
+        deduped2: list = []
+        for item in results:
+            fp = _fp(item)
+            if fp[2] is None and fp[4] is None:
+                deduped2.append(item)   # no price/size data: always keep as-is
+                continue
+            if fp in seen_fps:
+                continue               # spatial duplicate: skip
+            seen_fps.add(fp)
+            deduped2.append(fp_to_best[fp])  # emit the winner for this fingerprint
+
+        count_deduped += len(results) - len(deduped2)
+        results = deduped2
+
+
         logger.info(
-            "API /listings → total_db=%d | matched=%d | deduped=%d | no_data=%d | no_coords=%d | filtered=%d",
-            len(seen_data), len(results), count_deduped, count_no_data, count_no_coords, count_filtered,
+            "API /listings → total_db=%d | matched=%d | deduped=%d | delisted=%d | no_data=%d | no_coords=%d | filtered=%d",
+            len(seen_data), len(results), count_deduped, count_delisted, count_no_data, count_no_coords, count_filtered,
         )
 
         return jsonify({
@@ -340,6 +391,154 @@ def api_ninkagai():
     except Exception as e:
         logger.exception("Error in /api/ninkagai")
         return jsonify({"error": str(e), "schools": []}), 500
+
+
+# ── Config edit endpoints ─────────────────────────────────────────────────────
+
+_EDITABLE_KEYS = {
+    # yaml_key: (type, nullable)
+    'max_distance_km':      (float, False),
+    'max_rent_man_yen':     (float, True),
+    'min_size_m2':          (float, True),
+    'max_building_age_years': (int, True),
+}
+
+
+def _yaml_set(content: str, key: str, value) -> str:
+    """Replace the scalar value of *key* in YAML text, preserving comments."""
+    # Matches:  <indent>key: <old_value>  # optional comment
+    pattern = rf'^([ \t]*{re.escape(key)}[ \t]*:[ \t]*)([^\n#]+?)([\t ]*(#[^\n]*)?)$'
+    replacement = rf'\g<1>{value}\g<3>'
+    new, n = re.subn(pattern, replacement, content, flags=re.MULTILINE)
+    if n == 0:
+        logger.warning('_yaml_set: key %r not found in config', key)
+    return new
+
+
+@app.route('/api/config-edit', methods=['GET'])
+def api_config_edit_get():
+    """Return current values of the 4 editable filter fields."""
+    try:
+        config = load_config(CONFIG_FILE)
+        loc = config.filters.location_filter
+        return jsonify({
+            'max_distance_km':        loc.max_distance_km,
+            'max_rent_man_yen':       config.filters.rental.max_rent_man_yen,
+            'min_size_m2':            config.filters.min_size_m2,
+            'max_building_age_years': config.filters.max_building_age_years,
+        })
+    except Exception as e:
+        logger.exception('Error in GET /api/config-edit')
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/config-edit', methods=['POST'])
+def api_config_edit_post():
+    """Patch the 4 editable filter fields in config.yaml in-place."""
+    try:
+        data = request.get_json(force=True)
+        if not data:
+            return jsonify({'error': 'No JSON body'}), 400
+
+        with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        applied = {}
+        for key, (cast, nullable) in _EDITABLE_KEYS.items():
+            if key not in data:
+                continue
+            raw = data[key]
+            if raw is None or raw == '':
+                if nullable:
+                    value = 'null'
+                else:
+                    continue  # skip — field is required
+            else:
+                try:
+                    value = cast(raw)
+                    # Format cleanly: no trailing .0 for int, 1 decimal for float
+                    if cast is int:
+                        value = int(value)
+                    else:
+                        # Keep up to 2 decimals, strip trailing zeros, ensure ≥1 decimal
+                        s = f'{float(value):.2f}'.rstrip('0').rstrip('.')
+                        value = s if '.' in s else s + '.0'
+                except (TypeError, ValueError) as exc:
+                    return jsonify({'error': f'Invalid value for {key}: {exc}'}), 400
+
+            content = _yaml_set(content, key, value)
+            applied[key] = value
+
+        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+            f.write(content)
+
+        logger.info('Config updated via web: %s', applied)
+        return jsonify({'ok': True, 'updated': applied})
+
+    except Exception as e:
+        logger.exception('Error in POST /api/config-edit')
+        return jsonify({'error': str(e)}), 500
+
+
+# ── Scraper endpoints ───────────────────────────────────────────────────────────────
+
+_scrape_lock = threading.Lock()
+_scrape_job: dict = {'status': 'idle', 'log': [], 'returncode': None, 'proc': None}
+
+
+def _drain_proc(proc, job: dict) -> None:
+    """Background thread: collect output and update job status when done."""
+    for line in proc.stdout:
+        with _scrape_lock:
+            job['log'].append(line.rstrip('\n'))
+    proc.wait()
+    with _scrape_lock:
+        job['returncode'] = proc.returncode
+        job['status'] = 'done' if proc.returncode == 0 else 'error'
+        job['proc'] = None
+    logger.info('Scraper finished with returncode=%s', proc.returncode)
+
+
+@app.route('/api/scrape/start', methods=['POST'])
+def api_scrape_start():
+    """Launch run_local --headless in a background subprocess."""
+    with _scrape_lock:
+        if _scrape_job['status'] == 'running':
+            return jsonify({'error': 'Scraper is already running'}), 409
+        try:
+            proc = subprocess.Popen(
+                [sys.executable, '-m', 'src.local.run_local', '--headless'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                cwd=_PROJECT_ROOT,
+            )
+            _scrape_job.update({
+                'status': 'running',
+                'log': [],
+                'returncode': None,
+                'proc': proc,
+            })
+            threading.Thread(
+                target=_drain_proc, args=(proc, _scrape_job), daemon=True
+            ).start()
+            logger.info('Scraper started (pid=%s)', proc.pid)
+            return jsonify({'ok': True})
+        except Exception as e:
+            logger.exception('Failed to start scraper')
+            _scrape_job['status'] = 'error'
+            return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/scrape/status', methods=['GET'])
+def api_scrape_status():
+    """Return current scraper status + last 30 log lines."""
+    with _scrape_lock:
+        return jsonify({
+            'status':     _scrape_job['status'],
+            'returncode': _scrape_job['returncode'],
+            'log':        _scrape_job['log'][-30:],
+        })
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

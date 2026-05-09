@@ -6,15 +6,18 @@ Công cụ tự động theo dõi tin đăng bất động sản trên **SUUMO**
 
 ## Tính năng
 
-- **Hỗ trợ cả 2 loại**: Thuê nhà (`chintai`) và Mua bán/Đất (`bukken`)
-- **Nhiều link tìm kiếm**: Cấu hình bao nhiêu link SUUMO cũng được
-- **Phân trang tự động**: Quét qua tất cả các trang kết quả
-- **Lọc theo điều kiện**: Giá, diện tích, sơ đồ, tuổi nhà, tiền đặt cọc...
-- **Thông báo Telegram**: Chỉ gửi khi có tin mới **phù hợp tiêu chí**
-- **Xuất CSV**: Lưu lại toàn bộ kết quả mỗi lần quét
-- **Tránh thông báo trùng**: Ghi nhớ tin đã thấy qua `seen_listings.json`
-- **Map Viewer** 🗺️: Giao diện bản đồ web (Flask + Leaflet.js) — hiển thị nhà, trường mầm non nhà nước (認可), trường tư (認可外) trên bản đồ với toggle bật/tắt từng lớp và **Spiderfier** tự động tỏa ra các căn trùng tọa độ khi click
-- **Theo dõi chỗ trống trường mầm non** 🏫: Tự động quét danh sách trường có chỗ trống (1歳児), geocode địa chỉ, cập nhật file JSON mỗi lần chạy Local Runner
+- **Hỗ trợ đa nền tảng**: SUUMO, Nifty... (hỗ trợ cả thuê nhà và mua bán).
+- **Map Viewer 2.0** 🗺️: Giao diện bản đồ hiện đại (Dark mode, Glassmorphism).
+    - **Smart Deduplication**: Gộp các tin đăng trùng lặp giữa các trang (Pass 1: Tên, Pass 2: Tọa độ + Giá + Diện tích).
+    - **Auto-Delist**: Tự động ẩn các tin đã biến mất khỏi website gốc để giữ bản đồ luôn sạch.
+    - **New Listing Highlight**: Các căn nhà mới xuất hiện trong lần quét gần nhất sẽ có hiệu ứng **Pulsing Yellow Marker** (nháy vàng) để dễ nhận diện.
+    - **Spiderfier**: Tự động tỏa ra các căn trùng tọa độ khi click.
+- **Control Center từ Web**:
+    - **Run Scraper**: Nút kích hoạt chạy scraper ngay từ trình duyệt (headless mode).
+    - **Live Logs**: Xem nhật ký chạy scraper thời gian thực trên giao diện web.
+    - **Dynamic Filter**: Chỉnh sửa bán kính, giá tiền, diện tích tối thiểu trực tiếp trên bản đồ và cập nhật kết quả tức thì.
+- **Theo dõi chỗ trống trường mầm non** 🏫: Hiển thị trường công (認可), trường tư (認可外) với dữ liệu chỗ trống (1歳児) được cập nhật tự động.
+- **Thông báo Telegram**: Chỉ gửi tin mới phù hợp tiêu chí, tích hợp nút "Mở bản đồ" và "Xem trên web".
 
 ---
 
@@ -213,7 +216,18 @@ Nifty sử dụng bot protection của Akamai / AWS WAF chặn rất gắt các 
 
 GNU General Public License v3.0 — xem [LICENSE](LICENSE).
 
----
+## Giao diện Bản đồ (Web UI)
+
+Giao diện web (`src/web/app.py`) cung cấp một trung tâm điều khiển toàn diện:
+
+- **Địa chỉ**: `http://localhost:5001`
+- **Bảng điều khiển Sidebar (Trái)**:
+    - **Filter nhanh**: Chỉnh `Max Rent`, `Min Size`, `Max Age` và `Max Distance`. Bấm **Save & Apply** để cập nhật toàn bộ bản đồ mà không cần load lại trang.
+    - **Run Local Scraper**: Bấm để chạy `run_local.py` ngay lập tức. Cửa sổ log bên dưới sẽ hiển thị tiến trình (`Searching SUUMO...`, `Matched 2 new listings...`).
+- **Phân loại Marker**:
+    - 🔵 **Blue**: Tin đăng thông thường.
+    - 🟡 **Yellow Pulsing**: Tin vừa mới được tìm thấy (New listing).
+    - 🏷️ **Nifty/Suumo Icons**: Biểu tượng giúp phân biệt nguồn tin.
 
 ---
 

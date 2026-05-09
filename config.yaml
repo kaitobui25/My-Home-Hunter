@@ -43,12 +43,12 @@ searches:
     type: rental
     enabled: true
     # site: nifty  # Không cần — tự detect từ URL (myhome.nifty.com)
-    url: "https://myhome.nifty.com/rent/osaka/osakashiyodogawaku_ct/?r1=40000&r2=65000&r3=21,22,24,31,32,34&ex1=1&sort=recommend"
+    url: "https://myhome.nifty.com/rent/osaka/osakashiyodogawaku_ct/?r1=40000&r2=70000&r3=21,22,24,31,32,34&ex1=1&sort=recommend"
 
   - name: "Suumo Yodogawaku Rental"
     type: rental
     enabled: true
-    url: "https://suumo.jp/jj/chintai/ichiran/FR301FC001/?ar=060&bs=040&pc=20&smk=&po1=25&po2=99&shkr1=03&shkr2=03&shkr3=03&shkr4=03&sc=27123&ta=27&cb=4.0&ct=6.5&md=06&md=07&md=08&md=09&md=10&et=9999999&mb=0&mt=9999999&cn=9999999&tc=0400301&fw2="
+    url: "https://suumo.jp/jj/chintai/ichiran/FR301FC001/?ar=060&bs=040&pc=20&smk=&po1=25&po2=99&shkr1=03&shkr2=03&shkr3=03&shkr4=03&sc=27123&ta=27&cb=4.0&ct=7.0&md=06&md=07&md=08&md=09&md=10&et=9999999&mb=0&mt=9999999&cn=9999999&tc=0400301&fw2="
 
   # Ví dụ search thứ 2 (đang tắt)
   # - name: "Tokyo Land Sale"
@@ -63,7 +63,7 @@ searches:
 # ============================================================
 filters:
   # --- Áp dụng chung cho cả rental và sale ---
-  min_size_m2: 30          # Diện tích tối thiểu (m²)
+  min_size_m2: 35.0          # Diện tích tối thiểu (m²)
   max_size_m2: null        # Diện tích tối đa (m²)
   max_building_age_years: 45  # Tuổi tòa nhà tối đa (năm). null = bỏ qua
 
@@ -74,7 +74,7 @@ filters:
     center_lat: 34.7241
     center_lng: 135.47399
     # Bán kính tối đa (km)
-    max_distance_km: 1.0
+    max_distance_km: 2.5
 
   # --- Chỉ áp dụng cho rental (thuê nhà) ---
   rental:
@@ -98,9 +98,6 @@ filters:
 
 # ============================================================
 # THÔNG BÁO QUA TELEGRAM
-# Hướng dẫn lấy token: https://core.telegram.org/bots/tutorial
-# Hướng dẫn lấy chat_id: nhắn /start cho bot, rồi vào:
-#   https://api.telegram.org/bot<TOKEN>/getUpdates
 # ============================================================
 notifications:
   telegram:

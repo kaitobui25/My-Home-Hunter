@@ -121,6 +121,27 @@ def _load_local_seen() -> dict:
     try:
         with open(LOCAL_SEEN_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
+        
+        # ── Migration: Normalize existing keys to canonical URLs ──────────
+        migrated = {}
+        migration_count = 0
+        for url, entry in data.items():
+            canon = _canonical_url(url)
+            if canon != url:
+                migration_count += 1
+            
+            # If multiple old URLs map to same canonical URL, 
+            # keep the one that was successfully sent to Telegram
+            if canon not in migrated or entry.get("tele_sent"):
+                # Update the internal URL to canonical as well
+                entry["url"] = canon
+                entry["_migrated"] = True
+                migrated[canon] = entry
+        
+        if migration_count > 0:
+            logger.info("[Local] Migrated %d legacy URLs to canonical format", migration_count)
+            data = migrated
+
         tele_sent_count = sum(1 for v in data.values() if v.get("tele_sent"))
         logger.info(
             "[Local] Loaded %d seen listings (%d sent to Telegram) from: %s",
@@ -156,14 +177,19 @@ def _mark_as_seen(seen: dict, listing: dict, tele_sent: bool) -> dict:
     url = listing.get("url")
     if not url:
         return seen
+    
+    # Use canonical URL as the stable key
+    canon_url = _canonical_url(url)
+    
     now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S+00:00")
     entry = {
         **{k: v for k, v in listing.items() if k not in ("lat", "lng", "distance_km")},
+        "url": canon_url, # Ensure internal URL is also canonical
         "tele_sent": tele_sent,
         "tele_sent_at": now_iso if tele_sent else None,
-        "first_seen_at": seen.get(url, {}).get("first_seen_at", now_iso),
+        "first_seen_at": seen.get(canon_url, {}).get("first_seen_at", now_iso),
     }
-    seen[url] = entry
+    seen[canon_url] = entry
     return seen
 
 
@@ -234,7 +260,10 @@ def run_local_search(
     }
 
     # ── Deduplicate: chỉ xử lý listing chưa từng scrape được ────────────────
-    new_listings = [l for l in all_listings if l.get("url") and l["url"] not in seen]
+    new_listings = [
+        l for l in all_listings 
+        if l.get("url") and _canonical_url(l["url"]) not in seen
+    ]
 
 
     logger.info(
@@ -301,9 +330,11 @@ def run_local_search(
     # → tránh scrape lại và gửi trùng vào lần sau
     for listing in new_listings:
         url = listing.get("url")
-        if url and url not in seen:  # Chưa được đánh dấu bởi matched loop phía trên
-            listing["search_name"] = search.name  # persist để --refilter dùng được
-            _mark_as_seen(seen, listing, tele_sent=False)
+        if url:
+            canon_url = _canonical_url(url)
+            if canon_url not in seen:  # Chưa được đánh dấu bởi matched loop phía trên
+                listing["search_name"] = search.name
+                _mark_as_seen(seen, listing, tele_sent=False)
 
     return seen, canonical_scraped
 

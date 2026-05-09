@@ -23,7 +23,7 @@ echo          (Trinh duyet se mo ra de vuot WAF)
 echo.
 
 :: Run Scraper
-python -m src.local.run_local
+python -m src.local.run_local --headless
 
 echo.
 echo ------------------------------------------------------------

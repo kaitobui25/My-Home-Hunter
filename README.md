@@ -8,7 +8,9 @@ Công cụ tự động theo dõi tin đăng bất động sản trên **SUUMO**
 
 - **Hỗ trợ đa nền tảng**: SUUMO, Nifty... (hỗ trợ cả thuê nhà và mua bán).
 - **Map Viewer 2.0** 🗺️: Giao diện bản đồ hiện đại (Dark mode, Glassmorphism).
-    - **Smart Deduplication**: Gộp các tin đăng trùng lặp giữa các trang (Pass 1: Tên, Pass 2: Tọa độ + Giá + Diện tích).
+    - **Smart Deduplication**: 
+    - Gộp các tin đăng trùng lặp giữa các trang (Pass 1: Tên, Pass 2: Tọa độ + Giá + Diện tích).
+    - **URL Canonicalization**: Tự động loại bỏ các tham số tracking (như `?bc=...` của SUUMO) giúp nhận diện chính xác căn cũ kể cả khi link thay đổi, tránh báo tin nhắn mới trùng lặp vô lý.
     - **Auto-Delist**: Tự động ẩn các tin đã biến mất khỏi website gốc để giữ bản đồ luôn sạch.
     - **New Listing Highlight**: Các căn nhà mới xuất hiện trong lần quét gần nhất sẽ có hiệu ứng **Pulsing Yellow Marker** (nháy vàng) để dễ nhận diện.
     - **Spiderfier**: Tự động tỏa ra các căn trùng tọa độ khi click.
@@ -95,6 +97,15 @@ python run.py
 # Chỉ chạy 1 search cụ thể
 python run.py --once --search "Toyonaka Rental"
 ```
+
+### ⚡ Chạy nhanh (Windows - 1 Click)
+
+Dành cho người dùng Windows muốn khởi động nhanh mà không cần gõ lệnh:
+
+- **[START_MAP_VIEWER.bat](START_MAP_VIEWER.bat)**: Mở giao diện bản đồ Map Viewer (Flask) và tự động bật trình duyệt web.
+- **[START_LOCAL_SCRAPER.bat](START_LOCAL_SCRAPER.bat)**: Chạy ngay lập tức tiến trình quét tin mới (Local Scraper) từ máy tính cá nhân.
+
+*Mẹo: Bạn có thể Chuột phải vào các file này -> Send to -> Desktop để tạo shortcut ngoài màn hình chính.*
 
 ### Chạy bằng Docker
 

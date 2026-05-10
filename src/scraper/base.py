@@ -26,7 +26,10 @@ class PlaywrightBase:
     def _init_driver(self):
         self.playwright = sync_playwright().start()
         self.browser = self.playwright.chromium.launch(headless=self.headless)
-        self.context = self.browser.new_context(viewport={'width': 1920, 'height': 1080})
+        self.context = self.browser.new_context(
+            viewport={'width': 1920, 'height': 1080},
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        )
         self.page = self.context.new_page()
 
         if self.disable_images_css:

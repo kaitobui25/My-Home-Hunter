@@ -240,43 +240,53 @@ def api_listings():
         count_deduped = len(results) - len(deduped)
         results = deduped
 
-        # ── Pass 3: spatial + price fingerprint dedup ──────────────────────
-        # Listings at the exact same geocoded coordinates with identical
-        # (price_man_yen, admin_fee_yen, size_m2) are almost certainly the
-        # same unit listed by multiple portals.  Keep only the best source
-        # (Nifty wins; within the same source, first seen wins).
-        def _fp(item: dict) -> tuple:
-            """Fingerprint: (lat_rounded, lng_rounded, price, admin_fee, size)."""
-            return (
-                round(item["lat"],  5),   # ~1 m precision
-                round(item["lng"],  5),
-                item.get("price_man_yen"),
-                item.get("admin_fee_yen"),
-                item.get("size_m2"),
-            )
-
-        fp_to_best: dict = {}
+        # ── Pass 3: fuzzy spatial + price/size dedup ─────────────────────────
+        # Listings within ~200m distance with identical (price_man_yen, size_m2)
+        # are almost certainly the same unit listed by multiple portals.
+        # Keep only the best source (Nifty wins; within the same source, first seen wins).
+        dedup_groups = []
         for item in results:
-            fp = _fp(item)
-            # Ignore fingerprints where key fields are all None (unscrapable data)
-            if fp[2] is None and fp[4] is None:
+            price = item.get("price_man_yen")
+            size = item.get("size_m2")
+            if price is None and size is None:
+                dedup_groups.append([item])
                 continue
-            if fp not in fp_to_best:
-                fp_to_best[fp] = item
-            elif not _is_nifty(fp_to_best[fp]["url"]) and _is_nifty(item["url"]):
-                fp_to_best[fp] = item   # upgrade to Nifty
 
-        seen_fps: set = set()
-        deduped2: list = []
-        for item in results:
-            fp = _fp(item)
-            if fp[2] is None and fp[4] is None:
-                deduped2.append(item)   # no price/size data: always keep as-is
+            lat, lng = item.get("lat"), item.get("lng")
+            if lat is None or lng is None:
+                dedup_groups.append([item])
                 continue
-            if fp in seen_fps:
-                continue               # spatial duplicate: skip
-            seen_fps.add(fp)
-            deduped2.append(fp_to_best[fp])  # emit the winner for this fingerprint
+
+            # Find matching group
+            matched_group = None
+            for group in dedup_groups:
+                g_item = group[0]
+                if g_item.get("price_man_yen") == price and g_item.get("size_m2") == size:
+                    g_lat, g_lng = g_item.get("lat"), g_item.get("lng")
+                    if g_lat is not None and g_lng is not None:
+                        dist = _calc_distance(lat, lng, g_lat, g_lng)
+                        if dist <= 0.2:  # within 200 meters
+                            matched_group = group
+                            break
+            
+            if matched_group is not None:
+                matched_group.append(item)
+            else:
+                dedup_groups.append([item])
+
+        deduped2 = []
+        for group in dedup_groups:
+            if len(group) == 1:
+                group[0]["other_urls"] = []
+                deduped2.append(group[0])
+            else:
+                # Ưu tiên item có địa chỉ dài nhất (địa chỉ chi tiết tới tận số nhà)
+                best = max(group, key=lambda x: len(x.get("address", "")))
+                
+                # Gom tất cả url khác của các nền tảng khác để nhúng vào popup
+                other_urls = list({item["url"] for item in group if item["url"] != best["url"] and item.get("url")})
+                best["other_urls"] = other_urls
+                deduped2.append(best)
 
         count_deduped += len(results) - len(deduped2)
         results = deduped2

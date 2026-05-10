@@ -8,16 +8,18 @@ Công cụ tự động theo dõi tin đăng bất động sản trên **SUUMO**
 
 - **Hỗ trợ đa nền tảng**: SUUMO, Nifty... (hỗ trợ cả thuê nhà và mua bán).
 - **Map Viewer 2.0** 🗺️: Giao diện bản đồ hiện đại (Dark mode, Glassmorphism).
-    - **Smart Deduplication**: 
-    - Gộp các tin đăng trùng lặp giữa các trang (Pass 1: Tên, Pass 2: Tọa độ + Giá + Diện tích).
+    - **Smart Cross-Portal Deduplication (Gộp trùng lặp đa nền tảng)**: 
+        - Gộp các tin đăng trùng lặp giữa các trang (SUUMO, NIFTY, HOME'S) vào chung 1 marker nếu chúng có chung **Giá + Diện tích** và nằm trong vòng bán kính **200m**.
+        - Thuật toán thông minh tự động so sánh độ dài chuỗi địa chỉ để ưu tiên chọn thông tin chi tiết nhất (thường là HOME'S có số nhà) làm tiêu chuẩn (Source of Truth).
+    - **Dynamic Source Filter & URL Swapping**: Tích hợp Dropdown lọc trên bản đồ. Khi bạn chọn "Chỉ xem HOME'S", giao diện sẽ không chỉ lọc mà còn tự động hoán vị (swap) URL chính trên popup sang link HOME'S tương ứng và ẩn đi các nút của trang khác để mang lại trải nghiệm trong suốt, không hiểu lầm.
     - **URL Canonicalization**: Tự động loại bỏ các tham số tracking (như `?bc=...` của SUUMO) giúp nhận diện chính xác căn cũ kể cả khi link thay đổi, tránh báo tin nhắn mới trùng lặp vô lý.
     - **Auto-Delist**: Tự động ẩn các tin đã biến mất khỏi website gốc để giữ bản đồ luôn sạch.
-    - **New Listing Highlight**: Các căn nhà mới xuất hiện trong lần quét gần nhất sẽ có hiệu ứng **Pulsing Yellow Marker** (nháy vàng) để dễ nhận diện.
-    - **Spiderfier**: Tự động tỏa ra các căn trùng tọa độ khi click.
+    - **Interactive Markers**: Các căn nhà mới xuất hiện có hiệu ứng **Pulsing Yellow Marker** (nháy vàng). Theo dõi lịch sử xem (hover 5s) và thả tim (faved) căn nhà.
+    - **Spiderfier**: Tự động tỏa ra các căn trùng tọa độ khi click (giải quyết triệt để việc nhiều căn đè lên cùng 1 tọa độ).
 - **Control Center từ Web**:
     - **Run Scraper**: Nút kích hoạt chạy scraper ngay từ trình duyệt (headless mode).
     - **Live Logs**: Xem nhật ký chạy scraper thời gian thực trên giao diện web.
-    - **Dynamic Filter**: Chỉnh sửa bán kính, giá tiền, diện tích tối thiểu trực tiếp trên bản đồ và cập nhật kết quả tức thì.
+    - **Dynamic Config**: Chỉnh sửa bán kính, giá tiền, diện tích tối thiểu trực tiếp trên bản đồ và cập nhật kết quả tức thì.
 - **Theo dõi chỗ trống trường mầm non** 🏫: Hiển thị trường công (認可), trường tư (認可外) với dữ liệu chỗ trống (1歳児) được cập nhật tự động.
 - **Thông báo Telegram**: Chỉ gửi tin mới phù hợp tiêu chí, tích hợp nút "Mở bản đồ" và "Xem trên web".
 
@@ -129,6 +131,7 @@ home-hunter/
 │   ├── scraper/
 │   │   ├── base.py          <- Lớp cơ sở (Playwright + seen_listings)
 │   │   ├── rental_hunter.py <- Scraper SUUMO thuê nhà
+│   │   ├── homes_rental_hunter.py <- Scraper LIFULL HOME'S thuê nhà
 │   │   ├── nifty_rental_hunter.py <- Scraper Nifty thuê nhà
 │   │   ├── sale_hunter.py   <- Scraper SUUMO mua bán
 │   │   └── school_vacancy_hunter.py <- Scraper chỗ trống trường mầm non (認可)

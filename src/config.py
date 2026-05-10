@@ -51,6 +51,7 @@ class SchoolSearchConfig:
 
 @dataclass
 class RentalFilterConfig:
+    min_rent_man_yen: Optional[float] = None
     max_rent_man_yen: Optional[float] = None
     max_admin_fee_yen: Optional[float] = None
     max_deposit_man_yen: Optional[float] = None
@@ -177,6 +178,8 @@ def load_config(path: str = "config.yaml") -> AppConfig:
                 site = "suumo"
             elif "nifty.com" in url:
                 site = "nifty"
+            elif "homes.co.jp" in url:
+                site = "homes"
             else:
                 site = "unknown"
         searches.append(SearchConfig(
@@ -216,6 +219,7 @@ def load_config(path: str = "config.yaml") -> AppConfig:
             max_distance_km=float(lraw.get("max_distance_km", 5.0)),
         ),
         rental=RentalFilterConfig(
+            min_rent_man_yen=rraw.get("min_rent_man_yen"),
             max_rent_man_yen=rraw.get("max_rent_man_yen"),
             max_admin_fee_yen=rraw.get("max_admin_fee_yen"),
             max_deposit_man_yen=rraw.get("max_deposit_man_yen"),

@@ -380,6 +380,15 @@
       <button class="toggle-btn"        id="tog-unsent" onclick="setFilter('unsent')">未通知</button>
       <button class="toggle-btn"        id="tog-fav"    onclick="setFilter('fav')" style="border-color:var(--pink);color:var(--pink);">★ お気に入り</button>
     </div>
+    
+    <div style="margin-top: 8px;">
+      <select id="source-filter" onchange="setFilter(filterMode)" class="cfg-input" style="padding: 6px; font-weight: 600;">
+        <option value="all">🔍 Tất cả các nguồn (All Sources)</option>
+        <option value="suumo">🟢 Chỉ hiển thị SUUMO</option>
+        <option value="homes">🟠 Chỉ hiển thị HOME'S</option>
+        <option value="nifty">🔵 Chỉ hiển thị NIFTY</option>
+      </select>
+    </div>
 
     <div class="section-title">凡例</div>
     <div class="legend-row"><div class="dot fav"></div><span>お気に入り物件 ★</span></div>
@@ -639,9 +648,24 @@ function buildPopup(l, lid) {
     ? `<hr class="popup-divider"><div class="popup-transport">${l.transportation.replace(/\|/g,'<br>')}</div>`
     : '';
 
-  // Encode lid so it's safe to embed in an onclick attribute
   const eLid = encodeURIComponent(lid);
   const isFaved = favedSet.has(lid);
+
+  let otherUrlsHtml = '';
+  const sourceFilterVal = document.getElementById('source-filter') ? document.getElementById('source-filter').value : 'all';
+  
+  if (sourceFilterVal === 'all' && l.other_urls && l.other_urls.length > 0) {
+    otherUrlsHtml = '<div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap; width:100%;">';
+    l.other_urls.forEach((url) => {
+      let siteName = 'Khác';
+      if (url.includes('suumo')) siteName = 'SUUMO';
+      else if (url.includes('homes.co.jp')) siteName = "HOME'S";
+      else if (url.includes('nifty')) siteName = 'NIFTY';
+      
+      otherUrlsHtml += `<a class="popup-btn primary" style="background:var(--surface2); border:1px solid var(--border); font-size:11px; padding:6px; flex:1; text-align:center;" href="${url}" target="_blank" rel="noopener" onclick="markViewedByLid('${eLid}')">${siteName}</a>`;
+    });
+    otherUrlsHtml += '</div>';
+  }
 
   return `
     <div class="popup-inner">
@@ -659,13 +683,16 @@ function buildPopup(l, lid) {
       </div>
       ${transport}
     </div>
-    <div class="popup-footer">
-      <a class="popup-btn primary" href="${l.url}" target="_blank" rel="noopener"
-         onclick="markViewedByLid('${eLid}')">詳細を見る →</a>
-      <button class="popup-btn fav-btn ${isFaved ? 'fav-on' : ''}"
-              onclick="toggleFavByLid('${eLid}')">
-        ${isFaved ? '★' : '☆'}
-      </button>
+    <div class="popup-footer" style="flex-wrap: wrap;">
+      <div style="display:flex; width:100%; gap:8px;">
+        <a class="popup-btn primary" style="flex:1;" href="${l.url}" target="_blank" rel="noopener"
+           onclick="markViewedByLid('${eLid}')">詳細を見る →</a>
+        <button class="popup-btn fav-btn ${isFaved ? 'fav-on' : ''}" style="flex-shrink:0;"
+                onclick="toggleFavByLid('${eLid}')">
+          ${isFaved ? '★' : '☆'}
+        </button>
+      </div>
+      ${otherUrlsHtml}
     </div>`;
 }
 
@@ -928,17 +955,52 @@ function renderMarkers(listings) {
 // ── Filter toggle ─────────────────────────────────────────────────────────
 function setFilter(mode) {
   filterMode = mode;
-  ['all','sent','unsent','fav'].forEach(id => {
+  ['all','unview','new','sent','unsent','fav'].forEach(id => {
     const el = document.getElementById('tog-'+id);
     if (el) el.classList.toggle('active', id === mode);
   });
+  
+  const sourceFilter = document.getElementById('source-filter') ? document.getElementById('source-filter').value : 'all';
+
   const filtered = allListings.filter(l => {
-    if (mode === 'sent')   return l.tele_sent;
-    if (mode === 'unsent') return !l.tele_sent;
-    if (mode === 'fav')    return favedSet.has(listingId(l));
+    const lid = listingId(l);
+    if (mode === 'unview') if (viewedSet.has(lid)) return false;
+    if (mode === 'new')    if (!newSet.has(lid)) return false;
+    if (mode === 'sent')   if (!l.tele_sent) return false;
+    if (mode === 'unsent') if (l.tele_sent) return false;
+    if (mode === 'fav')    if (!favedSet.has(lid)) return false;
+    
+    if (sourceFilter !== 'all') {
+      const u = l.url || '';
+      const others = l.other_urls || [];
+      const allUrlsArray = [u, ...others];
+      
+      let matchedUrl = null;
+      if (sourceFilter === 'suumo') matchedUrl = allUrlsArray.find(x => x && x.includes('suumo'));
+      if (sourceFilter === 'homes') matchedUrl = allUrlsArray.find(x => x && x.includes('homes.co.jp'));
+      if (sourceFilter === 'nifty') matchedUrl = allUrlsArray.find(x => x && x.includes('nifty'));
+      
+      if (!matchedUrl) return false;
+      
+      // Hoán đổi URL chính để popup luôn ưu tiên hiển thị link của nguồn được chọn
+      if (matchedUrl !== u) {
+          l.other_urls = allUrlsArray.filter(x => x !== matchedUrl && x);
+          l.url = matchedUrl;
+      }
+    }
+    
     return true;
   });
   renderMarkers(filtered);
+  
+  // Cập nhật lại các con số thống kê
+  const sentCount = filtered.filter(l => l.tele_sent).length;
+  const unsentCount = filtered.filter(l => !l.tele_sent).length;
+  document.getElementById('stat-matched').textContent = filtered.length;
+  document.getElementById('stat-sent').textContent = sentCount;
+  document.getElementById('stat-unsent').textContent = unsentCount;
+  const dbTotal = document.getElementById('stat-total').textContent;
+  document.getElementById('panel-subtitle').textContent = `${filtered.length}件表示 · DB合計${dbTotal}件`;
 }
 
 // ── Center + radius circle ────────────────────────────────────────────────

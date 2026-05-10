@@ -50,6 +50,12 @@ def create_hunter(search: SearchConfig, config: AppConfig):
             return NiftyRentalHunter(search=search, general=config.general)
         else:
             raise ValueError(f"Nifty site only supports 'rental' type, got: '{search.type}'.")
+    elif site == "homes":
+        if search.type == "rental":
+            from src.scraper.homes_rental_hunter import HOMESRentalHunter
+            return HOMESRentalHunter(search=search, general=config.general, filters=config.filters)
+        else:
+            raise ValueError(f"HOMES site only supports 'rental' type, got: '{search.type}'.")
 
     # Default: SUUMO
     if search.type == "rental":

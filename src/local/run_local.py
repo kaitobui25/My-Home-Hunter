@@ -225,6 +225,12 @@ def run_local_search(
                 hunter = NiftyRentalHunter(search=search, general=config.general)
             else:
                 raise ValueError(f"Nifty site only supports 'rental' type, got: '{search.type}'.")
+        elif site == "homes":
+            if search.type == "rental":
+                from src.scraper.homes_rental_hunter import HOMESRentalHunter
+                hunter = HOMESRentalHunter(search=search, general=config.general, filters=config.filters)
+            else:
+                raise ValueError(f"HOMES site only supports 'rental' type, got: '{search.type}'.")
         else:
             # Default: SUUMO
             if search.type == "rental":
@@ -289,6 +295,20 @@ def run_local_search(
             listing["lng"] = None
             listing["distance_km"] = None
 
+    # ── Xây dựng danh sách Fingerprint từ DB cũ để dedup ────────────────────
+    # Sử dụng thuật toán fuzzy location (cùng giá, cùng diện tích, cách nhau <= 200m)
+    seen_fps = []
+    for item in seen.values():
+        ilat = item.get("lat")
+        ilng = item.get("lng")
+        if ilat is not None and ilng is not None:
+            seen_fps.append({
+                "lat": ilat,
+                "lng": ilng,
+                "price": item.get("price_man_yen"),
+                "size": item.get("size_m2")
+            })
+
     # ── Filter new listings ──────────────────────────────────────────────────
     matched = []
     for listing in new_listings:
@@ -302,6 +322,27 @@ def run_local_search(
                     dist or 999, loc_cfg.max_distance_km, listing.get("url"),
                 )
                 continue
+        
+        # Cross-portal deduplication bằng fingerprint fuzzy distance (< 200m)
+        lat, lng = listing.get("lat"), listing.get("lng")
+        price = listing.get("price_man_yen")
+        size = listing.get("size_m2")
+        
+        is_dup = False
+        if lat is not None and lng is not None and price is not None and size is not None:
+            for fp in seen_fps:
+                if fp["price"] == price and fp["size"] == size:
+                    dist = geocoder.calculate_distance(lat, lng, fp["lat"], fp["lng"])
+                    if dist <= 0.2:
+                        is_dup = True
+                        break
+            
+            if is_dup:
+                logger.debug("DEDUPED (Fingerprint): %s -> %s", listing.get("name"), listing.get("url"))
+                continue
+                
+            seen_fps.append({"lat": lat, "lng": lng, "price": price, "size": size})
+
         matched.append(listing)
         logger.info(
             "[%s] MATCHED: %s (Dist: %s) - %s",

@@ -14,6 +14,7 @@ Tính năng:
   - Áp dụng filter y hệt config.yaml (dùng lại ListingFilter)
   - Trả về JSON qua /api/listings để frontend render bản đồ
 """
+
 from __future__ import annotations
 
 import json
@@ -38,11 +39,17 @@ from src.filter import ListingFilter
 app = Flask(__name__, template_folder="templates")
 
 # ── Paths ────────────────────────────────────────────────────────────────────
-LOCAL_SEEN_FILE = os.path.join(_PROJECT_ROOT, "results-local", "local_seen_listings.json")
+LOCAL_SEEN_FILE = os.path.join(
+    _PROJECT_ROOT, "results-local", "local_seen_listings.json"
+)
 GEOCODE_CACHE_FILE = os.path.join(_PROJECT_ROOT, "results", "geocode_cache.json")
 CONFIG_FILE = os.path.join(_PROJECT_ROOT, "config.yaml")
-SCHOOL_DATA_FILE = os.path.join(_PROJECT_ROOT, "my-data", "hoikuen", "ninka", "yodogawa_vacancies_1yo_20260501.json")
-NINKAGAI_DATA_FILE = os.path.join(_PROJECT_ROOT, "my-data", "hoikuen", "ninkagai", "ninkagai_geocoded.json")
+SCHOOL_DATA_FILE = os.path.join(
+    _PROJECT_ROOT, "my-data", "hoikuen", "ninka", "yodogawa_vacancies_1yo_20260501.json"
+)
+NINKAGAI_DATA_FILE = os.path.join(
+    _PROJECT_ROOT, "my-data", "hoikuen", "ninkagai", "ninkagai_geocoded.json"
+)
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -53,6 +60,7 @@ logger = logging.getLogger("web.app")
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
 
 def _load_geocode_cache() -> dict:
     """Load geocode cache. Returns {clean_address: [lat, lng]}."""
@@ -75,7 +83,9 @@ def _clean_address(address: str) -> str:
     return address.split(" ")[0].split("\n")[0]
 
 
-def _resolve_coords(address: str, geocode_cache: dict) -> tuple[float | None, float | None]:
+def _resolve_coords(
+    address: str, geocode_cache: dict
+) -> tuple[float | None, float | None]:
     """Lookup lat/lng from geocode cache using the same clean key."""
     if not address:
         return None, None
@@ -93,12 +103,14 @@ def _calc_distance(lat1: float, lng1: float, lat2: float, lng2: float) -> float 
     """Calculate distance in km using geopy (already in requirements.txt)."""
     try:
         from geopy.distance import geodesic
+
         return geodesic((lat1, lng1), (lat2, lng2)).kilometers
     except Exception:
         return None
 
 
 # ── Routes ───────────────────────────────────────────────────────────────────
+
 
 @app.route("/")
 def index():
@@ -126,22 +138,24 @@ def api_listings():
 
         # Load seen listings DB
         if not os.path.exists(LOCAL_SEEN_FILE):
-            return jsonify({
-                "error": f"Không tìm thấy file: {LOCAL_SEEN_FILE}",
-                "listings": [],
-                "stats": {},
-                "config": {}
-            }), 404
+            return jsonify(
+                {
+                    "error": f"Không tìm thấy file: {LOCAL_SEEN_FILE}",
+                    "listings": [],
+                    "stats": {},
+                    "config": {},
+                }
+            ), 404
 
         with open(LOCAL_SEEN_FILE, "r", encoding="utf-8") as f:
             seen_data: dict = json.load(f)
 
         # ── Process each entry ──────────────────────────────────────────────
         results = []
-        count_no_data    = 0   # Migrated/empty entries without listing fields
-        count_no_coords  = 0   # Has data but address not in geocode cache
-        count_filtered   = 0   # Has coords but fails ListingFilter or location filter
-        count_delisted   = 0   # Removed from source site (marked by run_local)
+        count_no_data = 0  # Migrated/empty entries without listing fields
+        count_no_coords = 0  # Has data but address not in geocode cache
+        count_filtered = 0  # Has coords but fails ListingFilter or location filter
+        count_delisted = 0  # Removed from source site (marked by run_local)
 
         for url, entry in seen_data.items():
             # Skip legacy migrated entries with no listing data
@@ -166,7 +180,9 @@ def api_listings():
             # Calculate distance from center
             distance_km = None
             if loc_cfg.enabled:
-                distance_km = _calc_distance(lat, lng, loc_cfg.center_lat, loc_cfg.center_lng)
+                distance_km = _calc_distance(
+                    lat, lng, loc_cfg.center_lat, loc_cfg.center_lng
+                )
 
             # Inject coords into entry so ListingFilter can work with it
             entry["lat"] = lat
@@ -185,27 +201,31 @@ def api_listings():
                     continue
 
             # ── Build output record ─────────────────────────────────────────
-            results.append({
-                "name": entry.get("name") or "物件名不明",
-                "url": url,
-                "lat": lat,
-                "lng": lng,
-                "distance_km": round(distance_km, 3) if distance_km is not None else None,
-                "price_man_yen": entry.get("price_man_yen"),
-                "admin_fee_yen": entry.get("admin_fee_yen"),
-                "deposit_man_yen": entry.get("deposit_man_yen"),
-                "key_money_man_yen": entry.get("key_money_man_yen"),
-                "layout": entry.get("layout", ""),
-                "size_m2": entry.get("size_m2"),
-                "floor": entry.get("floor", ""),
-                "building_age": entry.get("building_age"),
-                "building_age_raw": entry.get("building_age_raw", ""),
-                "address": address,
-                "transportation": entry.get("transportation", ""),
-                "tele_sent": bool(entry.get("tele_sent", False)),
-                "first_seen_at": entry.get("first_seen_at"),
-                "search_name": entry.get("search_name", ""),
-            })
+            results.append(
+                {
+                    "name": entry.get("name") or "物件名不明",
+                    "url": url,
+                    "lat": lat,
+                    "lng": lng,
+                    "distance_km": round(distance_km, 3)
+                    if distance_km is not None
+                    else None,
+                    "price_man_yen": entry.get("price_man_yen"),
+                    "admin_fee_yen": entry.get("admin_fee_yen"),
+                    "deposit_man_yen": entry.get("deposit_man_yen"),
+                    "key_money_man_yen": entry.get("key_money_man_yen"),
+                    "layout": entry.get("layout", ""),
+                    "size_m2": entry.get("size_m2"),
+                    "floor": entry.get("floor", ""),
+                    "building_age": entry.get("building_age"),
+                    "building_age_raw": entry.get("building_age_raw", ""),
+                    "address": address,
+                    "transportation": entry.get("transportation", ""),
+                    "tele_sent": bool(entry.get("tele_sent", False)),
+                    "first_seen_at": entry.get("first_seen_at"),
+                    "search_name": entry.get("search_name", ""),
+                }
+            )
 
         # ── Deduplicate by property name: prefer Nifty over SUUMO ──────────
         # When the same 物件名 appears in both sources, keep only the Nifty
@@ -230,10 +250,10 @@ def api_listings():
         for item in results:
             name = (item.get("name") or "").strip()
             if not name or name == "物件名不明":
-                deduped.append(item)   # nameless: always keep
+                deduped.append(item)  # nameless: always keep
                 continue
             if name in seen_names:
-                continue               # duplicate name: skip
+                continue  # duplicate name: skip
             seen_names.add(name)
             deduped.append(name_to_best[name])  # emit the winner (may differ from item)
 
@@ -261,14 +281,17 @@ def api_listings():
             matched_group = None
             for group in dedup_groups:
                 g_item = group[0]
-                if g_item.get("price_man_yen") == price and g_item.get("size_m2") == size:
+                if (
+                    g_item.get("price_man_yen") == price
+                    and g_item.get("size_m2") == size
+                ):
                     g_lat, g_lng = g_item.get("lat"), g_item.get("lng")
                     if g_lat is not None and g_lng is not None:
                         dist = _calc_distance(lat, lng, g_lat, g_lng)
                         if dist <= 0.2:  # within 200 meters
                             matched_group = group
                             break
-            
+
             if matched_group is not None:
                 matched_group.append(item)
             else:
@@ -282,49 +305,66 @@ def api_listings():
             else:
                 # Ưu tiên item có địa chỉ dài nhất (địa chỉ chi tiết tới tận số nhà)
                 best = max(group, key=lambda x: len(x.get("address", "")))
-                
+
                 # Gom tất cả url khác của các nền tảng khác để nhúng vào popup
-                other_urls = list({item["url"] for item in group if item["url"] != best["url"] and item.get("url")})
+                other_urls = list(
+                    {
+                        item["url"]
+                        for item in group
+                        if item["url"] != best["url"] and item.get("url")
+                    }
+                )
                 best["other_urls"] = other_urls
                 deduped2.append(best)
 
         count_deduped += len(results) - len(deduped2)
         results = deduped2
 
-
         logger.info(
             "API /listings → total_db=%d | matched=%d | deduped=%d | delisted=%d | no_data=%d | no_coords=%d | filtered=%d",
-            len(seen_data), len(results), count_deduped, count_delisted, count_no_data, count_no_coords, count_filtered,
+            len(seen_data),
+            len(results),
+            count_deduped,
+            count_delisted,
+            count_no_data,
+            count_no_coords,
+            count_filtered,
         )
 
-        return jsonify({
-            "listings": results,
-            "stats": {
-                "total_in_db": len(seen_data),
-                "matched": len(results),
-                "no_data": count_no_data,
-                "no_coords": count_no_coords,
-                "filtered_out": count_filtered,
-            },
-            "config": {
-                "center_lat": loc_cfg.center_lat,
-                "center_lng": loc_cfg.center_lng,
-                "max_distance_km": loc_cfg.max_distance_km,
-                "location_filter_enabled": loc_cfg.enabled,
-                "max_rent_man_yen": config.filters.rental.max_rent_man_yen,
-                "allowed_layouts": config.filters.rental.allowed_layouts,
-                "max_building_age_years": config.filters.max_building_age_years,
-                "min_size_m2": config.filters.min_size_m2,
-                "max_admin_fee_yen": config.filters.rental.max_admin_fee_yen,
-            },
-        })
+        return jsonify(
+            {
+                "listings": results,
+                "stats": {
+                    "total_in_db": len(seen_data),
+                    "matched": len(results),
+                    "no_data": count_no_data,
+                    "no_coords": count_no_coords,
+                    "filtered_out": count_filtered,
+                },
+                "config": {
+                    "center_lat": loc_cfg.center_lat,
+                    "center_lng": loc_cfg.center_lng,
+                    "max_distance_km": loc_cfg.max_distance_km,
+                    "location_filter_enabled": loc_cfg.enabled,
+                    "max_rent_man_yen": config.filters.rental.max_rent_man_yen,
+                    "allowed_layouts": config.filters.rental.allowed_layouts,
+                    "max_building_age_years": config.filters.max_building_age_years,
+                    "min_size_m2": config.filters.min_size_m2,
+                    "max_admin_fee_yen": config.filters.rental.max_admin_fee_yen,
+                },
+            }
+        )
 
     except FileNotFoundError as e:
         logger.error("File not found: %s", e)
-        return jsonify({"error": str(e), "listings": [], "stats": {}, "config": {}}), 404
+        return jsonify(
+            {"error": str(e), "listings": [], "stats": {}, "config": {}}
+        ), 404
     except Exception as e:
         logger.exception("Unexpected error in /api/listings")
-        return jsonify({"error": str(e), "listings": [], "stats": {}, "config": {}}), 500
+        return jsonify(
+            {"error": str(e), "listings": [], "stats": {}, "config": {}}
+        ), 500
 
 
 @app.route("/api/schools")
@@ -346,21 +386,29 @@ def api_schools():
             lng = s.get("lng")
             if lat is None or lng is None:
                 continue
-            schools.append({
-                "name": s.get("school_name", "不明"),
-                "address": s.get("address", ""),
-                "lat": lat,
-                "lng": lng,
-                "vacancies": s.get("vacancies_1_year", 0),
-                "notes": s.get("notes", ""),
-                "scraped_at": s.get("scraped_at", ""),
-            })
+            schools.append(
+                {
+                    "name": s.get("school_name", "不明"),
+                    "address": s.get("address", ""),
+                    "lat": lat,
+                    "lng": lng,
+                    "vacancies": s.get("vacancies_1_year", 0),
+                    "notes": s.get("notes", ""),
+                    "scraped_at": s.get("scraped_at", ""),
+                }
+            )
 
-        logger.info("API /schools → %d schools with coords (of %d total)", len(schools), len(raw))
-        return jsonify({
-            "schools": schools,
-            "stats": {"total": len(raw), "with_coords": len(schools)},
-        })
+        logger.info(
+            "API /schools → %d schools with coords (of %d total)",
+            len(schools),
+            len(raw),
+        )
+        return jsonify(
+            {
+                "schools": schools,
+                "stats": {"total": len(raw), "with_coords": len(schools)},
+            }
+        )
 
     except Exception as e:
         logger.exception("Error in /api/schools")
@@ -385,18 +433,22 @@ def api_ninkagai():
             lng = s.get("lng")
             if lat is None or lng is None:
                 continue
-            schools.append({
-                "name": s.get("name", "不明"),
-                "address": s.get("address", ""),
-                "lat": lat,
-                "lng": lng,
-            })
+            schools.append(
+                {
+                    "name": s.get("name", "不明"),
+                    "address": s.get("address", ""),
+                    "lat": lat,
+                    "lng": lng,
+                }
+            )
 
         logger.info("API /ninkagai → %d schools", len(schools))
-        return jsonify({
-            "schools": schools,
-            "stats": {"total": len(raw), "with_coords": len(schools)},
-        })
+        return jsonify(
+            {
+                "schools": schools,
+                "stats": {"total": len(raw), "with_coords": len(schools)},
+            }
+        )
 
     except Exception as e:
         logger.exception("Error in /api/ninkagai")
@@ -407,50 +459,56 @@ def api_ninkagai():
 
 _EDITABLE_KEYS = {
     # yaml_key: (type, nullable)
-    'max_distance_km':      (float, False),
-    'max_rent_man_yen':     (float, True),
-    'min_size_m2':          (float, True),
-    'max_building_age_years': (int, True),
+    "max_distance_km": (float, False),
+    "max_rent_man_yen": (float, True),
+    "min_size_m2": (float, True),
+    "max_building_age_years": (int, True),
+    "center_lat": (float, False),
+    "center_lng": (float, False),
 }
 
 
 def _yaml_set(content: str, key: str, value) -> str:
     """Replace the scalar value of *key* in YAML text, preserving comments."""
     # Matches:  <indent>key: <old_value>  # optional comment
-    pattern = rf'^([ \t]*{re.escape(key)}[ \t]*:[ \t]*)([^\n#]+?)([\t ]*(#[^\n]*)?)$'
-    replacement = rf'\g<1>{value}\g<3>'
+    pattern = rf"^([ \t]*{re.escape(key)}[ \t]*:[ \t]*)([^\n#]+?)([\t ]*(#[^\n]*)?)$"
+    replacement = rf"\g<1>{value}\g<3>"
     new, n = re.subn(pattern, replacement, content, flags=re.MULTILINE)
     if n == 0:
-        logger.warning('_yaml_set: key %r not found in config', key)
+        logger.warning("_yaml_set: key %r not found in config", key)
     return new
 
 
-@app.route('/api/config-edit', methods=['GET'])
+@app.route("/api/config-edit", methods=["GET"])
 def api_config_edit_get():
-    """Return current values of the 4 editable filter fields."""
+    """Return current values of the editable filter fields."""
     try:
         config = load_config(CONFIG_FILE)
         loc = config.filters.location_filter
-        return jsonify({
-            'max_distance_km':        loc.max_distance_km,
-            'max_rent_man_yen':       config.filters.rental.max_rent_man_yen,
-            'min_size_m2':            config.filters.min_size_m2,
-            'max_building_age_years': config.filters.max_building_age_years,
-        })
+        return jsonify(
+            {
+                "max_distance_km": loc.max_distance_km,
+                "max_rent_man_yen": config.filters.rental.max_rent_man_yen,
+                "min_size_m2": config.filters.min_size_m2,
+                "max_building_age_years": config.filters.max_building_age_years,
+                "center_lat": loc.center_lat,
+                "center_lng": loc.center_lng,
+            }
+        )
     except Exception as e:
-        logger.exception('Error in GET /api/config-edit')
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Error in GET /api/config-edit")
+        return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/config-edit', methods=['POST'])
+@app.route("/api/config-edit", methods=["POST"])
 def api_config_edit_post():
     """Patch the 4 editable filter fields in config.yaml in-place."""
     try:
         data = request.get_json(force=True)
         if not data:
-            return jsonify({'error': 'No JSON body'}), 400
+            return jsonify({"error": "No JSON body"}), 400
 
-        with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             content = f.read()
 
         applied = {}
@@ -458,9 +516,9 @@ def api_config_edit_post():
             if key not in data:
                 continue
             raw = data[key]
-            if raw is None or raw == '':
+            if raw is None or raw == "":
                 if nullable:
-                    value = 'null'
+                    value = "null"
                 else:
                     continue  # skip — field is required
             else:
@@ -470,85 +528,95 @@ def api_config_edit_post():
                     if cast is int:
                         value = int(value)
                     else:
-                        # Keep up to 2 decimals, strip trailing zeros, ensure ≥1 decimal
-                        s = f'{float(value):.2f}'.rstrip('0').rstrip('.')
-                        value = s if '.' in s else s + '.0'
+                        # For coordinates, keep more precision; for others, 2 decimals is enough
+                        if key in ("center_lat", "center_lng"):
+                            value = f"{float(value):.6f}".rstrip("0").rstrip(".")
+                            if "." not in value:
+                                value += ".0"
+                        else:
+                            # Keep up to 2 decimals, strip trailing zeros, ensure ≥1 decimal
+                            s = f"{float(value):.2f}".rstrip("0").rstrip(".")
+                            value = s if "." in s else s + ".0"
                 except (TypeError, ValueError) as exc:
-                    return jsonify({'error': f'Invalid value for {key}: {exc}'}), 400
+                    return jsonify({"error": f"Invalid value for {key}: {exc}"}), 400
 
             content = _yaml_set(content, key, value)
             applied[key] = value
 
-        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             f.write(content)
 
-        logger.info('Config updated via web: %s', applied)
-        return jsonify({'ok': True, 'updated': applied})
+        logger.info("Config updated via web: %s", applied)
+        return jsonify({"ok": True, "updated": applied})
 
     except Exception as e:
-        logger.exception('Error in POST /api/config-edit')
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Error in POST /api/config-edit")
+        return jsonify({"error": str(e)}), 500
 
 
 # ── Scraper endpoints ───────────────────────────────────────────────────────────────
 
 _scrape_lock = threading.Lock()
-_scrape_job: dict = {'status': 'idle', 'log': [], 'returncode': None, 'proc': None}
+_scrape_job: dict = {"status": "idle", "log": [], "returncode": None, "proc": None}
 
 
 def _drain_proc(proc, job: dict) -> None:
     """Background thread: collect output and update job status when done."""
     for line in proc.stdout:
         with _scrape_lock:
-            job['log'].append(line.rstrip('\n'))
+            job["log"].append(line.rstrip("\n"))
     proc.wait()
     with _scrape_lock:
-        job['returncode'] = proc.returncode
-        job['status'] = 'done' if proc.returncode == 0 else 'error'
-        job['proc'] = None
-    logger.info('Scraper finished with returncode=%s', proc.returncode)
+        job["returncode"] = proc.returncode
+        job["status"] = "done" if proc.returncode == 0 else "error"
+        job["proc"] = None
+    logger.info("Scraper finished with returncode=%s", proc.returncode)
 
 
-@app.route('/api/scrape/start', methods=['POST'])
+@app.route("/api/scrape/start", methods=["POST"])
 def api_scrape_start():
     """Launch run_local --headless in a background subprocess."""
     with _scrape_lock:
-        if _scrape_job['status'] == 'running':
-            return jsonify({'error': 'Scraper is already running'}), 409
+        if _scrape_job["status"] == "running":
+            return jsonify({"error": "Scraper is already running"}), 409
         try:
             proc = subprocess.Popen(
-                [sys.executable, '-m', 'src.local.run_local', '--headless'],
+                [sys.executable, "-m", "src.local.run_local", "--headless"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
                 cwd=_PROJECT_ROOT,
             )
-            _scrape_job.update({
-                'status': 'running',
-                'log': [],
-                'returncode': None,
-                'proc': proc,
-            })
+            _scrape_job.update(
+                {
+                    "status": "running",
+                    "log": [],
+                    "returncode": None,
+                    "proc": proc,
+                }
+            )
             threading.Thread(
                 target=_drain_proc, args=(proc, _scrape_job), daemon=True
             ).start()
-            logger.info('Scraper started (pid=%s)', proc.pid)
-            return jsonify({'ok': True})
+            logger.info("Scraper started (pid=%s)", proc.pid)
+            return jsonify({"ok": True})
         except Exception as e:
-            logger.exception('Failed to start scraper')
-            _scrape_job['status'] = 'error'
-            return jsonify({'error': str(e)}), 500
+            logger.exception("Failed to start scraper")
+            _scrape_job["status"] = "error"
+            return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/scrape/status', methods=['GET'])
+@app.route("/api/scrape/status", methods=["GET"])
 def api_scrape_status():
     """Return current scraper status + last 30 log lines."""
     with _scrape_lock:
-        return jsonify({
-            'status':     _scrape_job['status'],
-            'returncode': _scrape_job['returncode'],
-            'log':        _scrape_job['log'][-30:],
-        })
+        return jsonify(
+            {
+                "status": _scrape_job["status"],
+                "returncode": _scrape_job["returncode"],
+                "log": _scrape_job["log"][-30:],
+            }
+        )
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

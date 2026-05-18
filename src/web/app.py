@@ -568,7 +568,10 @@ def _drain_proc(proc, job: dict) -> None:
     proc.wait()
     with _scrape_lock:
         job["returncode"] = proc.returncode
-        job["status"] = "done" if proc.returncode == 0 else "error"
+        if job.get("status") == "stopping":
+            job["status"] = "stopped"
+        else:
+            job["status"] = "done" if proc.returncode == 0 else "error"
         job["proc"] = None
     logger.info("Scraper finished with returncode=%s", proc.returncode)
 
@@ -604,6 +607,29 @@ def api_scrape_start():
             logger.exception("Failed to start scraper")
             _scrape_job["status"] = "error"
             return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/scrape/stop", methods=["POST"])
+def api_scrape_stop():
+    """Stop the running scraper subprocess."""
+    with _scrape_lock:
+        proc = _scrape_job.get("proc")
+        if _scrape_job.get("status") != "running" or proc is None:
+            return jsonify({"error": "Scraper is not running"}), 409
+        _scrape_job["status"] = "stopping"
+        _scrape_job["log"].append("[web] Stop requested by user...")
+
+    try:
+        proc.terminate()
+    except Exception as e:
+        logger.exception("Failed to terminate scraper process")
+        with _scrape_lock:
+            _scrape_job["status"] = "error"
+            _scrape_job["log"].append(f"[web] Stop failed: {e}")
+        return jsonify({"error": str(e)}), 500
+
+    logger.info("Stop signal sent to scraper (pid=%s)", proc.pid)
+    return jsonify({"ok": True})
 
 
 @app.route("/api/scrape/status", methods=["GET"])

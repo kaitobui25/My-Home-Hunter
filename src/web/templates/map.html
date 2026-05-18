@@ -617,6 +617,28 @@
                 transition: opacity 0.2s;
                 letter-spacing: 0.3px;
             }
+            #btn-stop-scrape {
+                margin-top: 6px;
+                width: 100%;
+                background: linear-gradient(135deg, #ef4444, #b91c1c);
+                border: none;
+                border-radius: 8px;
+                padding: 8px;
+                color: #fff;
+                font-size: 12px;
+                font-weight: 600;
+                cursor: pointer;
+                transition: opacity 0.2s;
+                letter-spacing: 0.3px;
+                display: none;
+            }
+            #btn-stop-scrape:hover {
+                opacity: 0.85;
+            }
+            #btn-stop-scrape:disabled {
+                opacity: 0.5;
+                cursor: default;
+            }
             #btn-scrape:hover {
                 opacity: 0.85;
             }
@@ -1044,6 +1066,9 @@
                 <button id="btn-scrape" onclick="startScrape()">
                     ▶ データ取得実行
                 </button>
+                <button id="btn-stop-scrape" onclick="stopScrape()">
+                    ■ 停止
+                </button>
                 <div id="scrape-status"></div>
                 <pre id="scrape-log"></pre>
 
@@ -1154,6 +1179,7 @@
             // ── "New listing" tracking (ephemeral, session only) ───────────────────────
             let newSet = new Set(); // IDs of listings added since last scrape
             let _preSnapshotIds = null; // set before scrape starts; compared in loadData()
+            let _scrapeStartedAtMs = null; // timestamp when user started current scrape
 
             // Maps lid -> marker / listing reference (used by popup click handlers)
             const _markerByLid = new Map();
@@ -1514,24 +1540,33 @@
                     // Custom cluster icon matching dark theme
                     iconCreateFunction: function (cluster) {
                         const count = cluster.getChildCount();
-                        // Detect if cluster is all-sent, all-unsent, or mixed
+                        // Detect cluster state by children markers
                         const children = cluster.getAllChildMarkers();
+                        const allViewed = children.every((m) => {
+                            const listing = m.options._listing;
+                            if (!listing) return false;
+                            return viewedSet.has(listingId(listing));
+                        });
                         const allSent = children.every(
                             (m) => m.options._teleSent,
                         );
                         const noneSent = children.every(
                             (m) => !m.options._teleSent,
                         );
-                        const fill = allSent
-                            ? "#34d399"
-                            : noneSent
-                              ? "#fb923c"
-                              : "#fbbf24";
-                        const border = allSent
-                            ? "#059669"
-                            : noneSent
-                              ? "#c2410c"
-                              : "#b45309";
+                        const fill = allViewed
+                            ? "#64748b"
+                            : allSent
+                              ? "#34d399"
+                              : noneSent
+                                ? "#fb923c"
+                                : "#fbbf24";
+                        const border = allViewed
+                            ? "#334155"
+                            : allSent
+                              ? "#059669"
+                              : noneSent
+                                ? "#c2410c"
+                                : "#b45309";
                         const size = count > 9 ? 28 : 22;
                         return L.divIcon({
                             className: "",
@@ -1868,8 +1903,12 @@
             }
 
             // ── Load data ─────────────────────────────────────────────────────────────
-            async function loadData() {
-                document.getElementById("loading").style.display = "flex";
+            let _hasInitializedView = false;
+            async function loadData(options = {}) {
+                const silent = !!options.silent;
+                if (!silent) {
+                    document.getElementById("loading").style.display = "flex";
+                }
                 document.getElementById("error-banner").style.display = "none";
 
                 try {
@@ -1881,12 +1920,32 @@
 
                     allListings = data.listings || [];
 
-                    // Compute "new" listings if a scrape just finished
+                    // Compute "new" listings for current scrape session.
+                    // Prefer first_seen_at timestamp to avoid false positives
+                    // caused by UI snapshot drift.
                     if (_preSnapshotIds !== null) {
+                        const newByTime = new Set();
+                        if (_scrapeStartedAtMs !== null) {
+                            allListings.forEach((l) => {
+                                const lid = listingId(l);
+                                const ts = l.first_seen_at
+                                    ? Date.parse(l.first_seen_at)
+                                    : NaN;
+                                if (!Number.isNaN(ts) && ts >= _scrapeStartedAtMs) {
+                                    newByTime.add(lid);
+                                }
+                            });
+                        }
                         newSet = new Set(
                             allListings
                                 .filter(
-                                    (l) => !_preSnapshotIds.has(listingId(l)),
+                                    (l) =>
+                                        newByTime.has(listingId(l)) ||
+                                        (!_preSnapshotIds.has(listingId(l)) &&
+                                            (Number.isNaN(
+                                                Date.parse(l.first_seen_at || ""),
+                                            ) ||
+                                                _scrapeStartedAtMs === null)),
                                 )
                                 .map((l) => listingId(l)),
                         );
@@ -1941,16 +2000,18 @@
                     // Build filter display
                     buildFilterList(cfg);
 
-                    // Set map view
-                    if (cfg.center_lat && cfg.center_lng) {
-                        map.setView([cfg.center_lat, cfg.center_lng], 14);
-                    } else if (allListings.length > 0) {
-                        map.setView(
-                            [allListings[0].lat, allListings[0].lng],
-                            14,
-                        );
-                    } else {
-                        map.setView([34.724, 135.474], 13);
+                    const shouldResetView = !silent || !_hasInitializedView;
+                    if (shouldResetView) {
+                        if (cfg.center_lat && cfg.center_lng) {
+                            map.setView([cfg.center_lat, cfg.center_lng], 14);
+                        } else if (allListings.length > 0) {
+                            map.setView(
+                                [allListings[0].lat, allListings[0].lng],
+                                14,
+                            );
+                        } else {
+                            map.setView([34.724, 135.474], 13);
+                        }
                     }
 
                     // Render markers
@@ -1958,16 +2019,19 @@
                     renderSchoolMarkers(allSchools);
                     renderNinkagaiMarkers(allNinkagai);
 
-                    // Fit bounds to include listings, ninka, and ninkagai
-                    const allPts = [
-                        ...allListings.map((l) => [l.lat, l.lng]),
-                        ...allSchools.map((s) => [s.lat, s.lng]),
-                        ...allNinkagai.map((s) => [s.lat, s.lng]),
-                    ];
-                    if (cfg.center_lat)
-                        allPts.push([cfg.center_lat, cfg.center_lng]);
-                    if (allPts.length > 0) {
-                        map.fitBounds(L.latLngBounds(allPts).pad(0.1));
+                    if (shouldResetView) {
+                        // Fit bounds to include listings, ninka, and ninkagai
+                        const allPts = [
+                            ...allListings.map((l) => [l.lat, l.lng]),
+                            ...allSchools.map((s) => [s.lat, s.lng]),
+                            ...allNinkagai.map((s) => [s.lat, s.lng]),
+                        ];
+                        if (cfg.center_lat)
+                            allPts.push([cfg.center_lat, cfg.center_lng]);
+                        if (allPts.length > 0) {
+                            map.fitBounds(L.latLngBounds(allPts).pad(0.1));
+                        }
+                        _hasInitializedView = true;
                     }
                 } catch (err) {
                     console.error(err);
@@ -1975,7 +2039,9 @@
                     banner.textContent = "⚠️ " + err.message;
                     banner.style.display = "block";
                 } finally {
-                    document.getElementById("loading").style.display = "none";
+                    if (!silent) {
+                        document.getElementById("loading").style.display = "none";
+                    }
                 }
             }
 
@@ -2066,9 +2132,11 @@
             loadConfigValues();
             // ── Scraper UI ─────────────────────────────────────────────────────────────────
             let _pollTimer = null;
+            let _liveRefreshTick = 0;
 
             async function startScrape() {
                 const btn = document.getElementById("btn-scrape");
+                const stopBtn = document.getElementById("btn-stop-scrape");
                 const status = document.getElementById("scrape-status");
                 const log = document.getElementById("scrape-log");
 
@@ -2097,6 +2165,9 @@
 
                 btn.disabled = true;
                 btn.textContent = "\u23f3 \u5b9f\u884c\u4e2d...";
+                _scrapeStartedAtMs = Date.now();
+                stopBtn.style.display = "block";
+                stopBtn.disabled = false;
                 status.style.color = "var(--yellow)";
                 status.textContent =
                     "\u25cf \u30b9\u30af\u30ec\u30a4\u30d7\u4e2d...";
@@ -2107,8 +2178,35 @@
                 _pollTimer = setInterval(_pollScrapeStatus, 2000);
             }
 
+            async function stopScrape() {
+                const stopBtn = document.getElementById("btn-stop-scrape");
+                const status = document.getElementById("scrape-status");
+
+                stopBtn.disabled = true;
+                status.style.color = "var(--orange)";
+                status.textContent = "\u25cf \u505c\u6b62\u8981\u6c42\u4e2d...";
+
+                try {
+                    const res = await fetch("/api/scrape/stop", {
+                        method: "POST",
+                    });
+                    const data = await res.json();
+                    if (!res.ok) {
+                        status.style.color = "var(--red)";
+                        status.textContent =
+                            "\u2717 " + (data.error || "Stop failed");
+                        stopBtn.disabled = false;
+                    }
+                } catch {
+                    status.style.color = "var(--red)";
+                    status.textContent = "\u2717 \u901a\u4fe1\u30a8\u30e9\u30fc";
+                    stopBtn.disabled = false;
+                }
+            }
+
             async function _pollScrapeStatus() {
                 const btn = document.getElementById("btn-scrape");
+                const stopBtn = document.getElementById("btn-stop-scrape");
                 const status = document.getElementById("scrape-status");
                 const log = document.getElementById("scrape-log");
 
@@ -2126,12 +2224,26 @@
                     log.scrollTop = log.scrollHeight;
                 }
 
-                if (data.status === "running") return; // still going
+                if (data.status === "running") {
+                    _liveRefreshTick += 1;
+                    if (_liveRefreshTick % 5 === 0) {
+                        await loadData({ silent: true });
+                    }
+                    return; // still going
+                }
+                if (data.status === "stopping") {
+                    status.style.color = "var(--orange)";
+                    status.textContent = "\u25cf \u505c\u6b62\u8981\u6c42\u4e2d...";
+                    return;
+                }
 
                 // Done or error
                 clearInterval(_pollTimer);
                 _pollTimer = null;
+                _liveRefreshTick = 0;
                 btn.disabled = false;
+                stopBtn.style.display = "none";
+                stopBtn.disabled = false;
 
                 if (data.status === "done") {
                     status.style.color = "var(--green)";
@@ -2145,6 +2257,14 @@
                         n > 0
                             ? `\u2713 \u5b8c\u4e86 \u2014 \u65b0\u7740 ${n}\u4ef6`
                             : "\u2713 \u5b8c\u4e86 (\u65b0\u898f\u306a\u3057)";
+                    _scrapeStartedAtMs = null;
+                } else if (data.status === "stopped") {
+                    status.style.color = "var(--orange)";
+                    status.textContent = "\u25a0 \u505c\u6b62\u3057\u307e\u3057\u305f";
+                    btn.textContent =
+                        "\u25b6 \u30c7\u30fc\u30bf\u53d6\u5f97\u5b9f\u884c";
+                    _preSnapshotIds = null;
+                    _scrapeStartedAtMs = null;
                 } else {
                     status.style.color = "var(--red)";
                     status.textContent =
@@ -2154,6 +2274,7 @@
                     btn.textContent =
                         "\u25b6 \u30c7\u30fc\u30bf\u53d6\u5f97\u5b9f\u884c";
                     _preSnapshotIds = null; // discard snapshot on error
+                    _scrapeStartedAtMs = null;
                 }
             }
         </script>

@@ -203,6 +203,7 @@ def run_local_search(
     telegram: TelegramNotifier,
     geocoder: GeocoderService,
     headless: bool,
+    on_seen_updated=None,
 ) -> dict:
     """
     Scrape one search, filter results, geocode, notify Telegram.
@@ -277,23 +278,7 @@ def run_local_search(
         search.name, len(all_listings), len(new_listings),
     )
 
-    # ── Geocode all (for filter + Telegram map link) ─────────────────────────
     loc_cfg = config.filters.location_filter
-    for listing in all_listings:
-        address = listing.get("address", "")
-        if address:
-            lat, lng = geocoder.get_coordinates(address)
-            listing["lat"] = lat
-            listing["lng"] = lng
-            if lat is not None and lng is not None and loc_cfg.enabled:
-                dist = geocoder.calculate_distance(lat, lng, loc_cfg.center_lat, loc_cfg.center_lng)
-                listing["distance_km"] = dist
-            else:
-                listing["distance_km"] = None
-        else:
-            listing["lat"] = None
-            listing["lng"] = None
-            listing["distance_km"] = None
 
     # ── Xây dựng danh sách Fingerprint từ DB cũ để dedup ────────────────────
     # Sử dụng thuật toán fuzzy location (cùng giá, cùng diện tích, cách nhau <= 200m)
@@ -312,6 +297,29 @@ def run_local_search(
     # ── Filter new listings ──────────────────────────────────────────────────
     matched = []
     for listing in new_listings:
+        # Geocode incrementally for each newly found listing
+        address = listing.get("address", "")
+        if address:
+            lat, lng = geocoder.get_coordinates(address)
+            listing["lat"] = lat
+            listing["lng"] = lng
+            if lat is not None and lng is not None and loc_cfg.enabled:
+                listing["distance_km"] = geocoder.calculate_distance(
+                    lat, lng, loc_cfg.center_lat, loc_cfg.center_lng
+                )
+            else:
+                listing["distance_km"] = None
+        else:
+            listing["lat"] = None
+            listing["lng"] = None
+            listing["distance_km"] = None
+
+        # Persist early so map viewer can pick this listing immediately.
+        listing["search_name"] = search.name
+        _mark_as_seen(seen, listing, tele_sent=False)
+        if callable(on_seen_updated):
+            on_seen_updated(seen)
+
         if not listing_filter.matches(listing):
             continue
         if loc_cfg.enabled:
@@ -360,22 +368,12 @@ def run_local_search(
     # ── Notify và Persist seen ─────────────────────────────────────────────────────────────
     if matched:
         telegram.send_batch(matched, search_name=f"[LOCAL] {search.name}")
-        # Đánh dấu các listing đã gửi Telegram thành công
         for listing in matched:
-            listing["search_name"] = search.name  # persist để --refilter dùng được
             _mark_as_seen(seen, listing, tele_sent=True)
+            if callable(on_seen_updated):
+                on_seen_updated(seen)
     else:
         logger.info("[%s] No matching new listings to notify.", search.name)
-
-    # Đánh dấu tất cả new listings (kể cả bị filter) là đã seen
-    # → tránh scrape lại và gửi trùng vào lần sau
-    for listing in new_listings:
-        url = listing.get("url")
-        if url:
-            canon_url = _canonical_url(url)
-            if canon_url not in seen:  # Chưa được đánh dấu bởi matched loop phía trên
-                listing["search_name"] = search.name
-                _mark_as_seen(seen, listing, tele_sent=False)
 
     return seen, canonical_scraped
 
@@ -541,6 +539,7 @@ def run_all(config: AppConfig, target_name: str | None, headless: bool) -> None:
             telegram=telegram,
             geocoder=geocoder,
             headless=headless,
+            on_seen_updated=_save_local_seen,
         )
         # Accumulate canonical URLs per site (only when scrape returned results)
         if canonical_urls:

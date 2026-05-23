@@ -49,6 +49,7 @@ import logging
 import os
 import sys
 import time
+import tempfile
 from datetime import datetime
 from urllib.parse import urlparse, urlunparse
 
@@ -153,12 +154,38 @@ def _load_local_seen() -> dict:
         return {}
 
 
+def _atomic_replace_with_retry(src: str, dst: str, attempts: int = 5, delay: float = 0.05) -> None:
+    """Atomically replace dst with src, retrying on Windows file-lock errors (PermissionError/OSError)."""
+    for i in range(attempts):
+        try:
+            os.replace(src, dst)
+            return
+        except (PermissionError, OSError) as e:
+            if i == attempts - 1:
+                raise
+            time.sleep(delay * (2 ** i))
+
+
 def _save_local_seen(seen: dict) -> None:
-    """Persist the local seen_listings store vào results-local/."""
+    """Persist the local seen_listings store vào results-local/ using atomic write with replace-retry."""
     try:
         os.makedirs(RESULTS_LOCAL_DIR, exist_ok=True)
-        with open(LOCAL_SEEN_FILE, "w", encoding="utf-8") as f:
-            json.dump(seen, f, ensure_ascii=False, indent=2)
+        # Write to a temp file in the same directory then atomically replace.
+        tmp_fd, tmp_path = tempfile.mkstemp(prefix=os.path.basename(LOCAL_SEEN_FILE) + ".tmp.", dir=RESULTS_LOCAL_DIR)
+        try:
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+                json.dump(seen, f, ensure_ascii=False, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            _atomic_replace_with_retry(tmp_path, LOCAL_SEEN_FILE)
+        except Exception:
+            # Cleanup temp file on failure
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
+            raise
         tele_sent_count = sum(1 for v in seen.values() if v.get("tele_sent"))
         logger.debug(
             "[Local] Saved %d seen listings (%d sent to Telegram) to: %s",

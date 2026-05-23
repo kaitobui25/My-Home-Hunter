@@ -24,6 +24,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 
 from flask import Flask, jsonify, render_template, request
 
@@ -62,17 +63,34 @@ logger = logging.getLogger("web.app")
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
+def _load_json_retry(path: str, attempts: int = 3, delay: float = 0.1, fallback=None):
+    """Read and parse JSON file with retries on JSONDecodeError. Returns fallback on failure."""
+    if not os.path.exists(path):
+        return fallback
+    for i in range(attempts):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except json.JSONDecodeError as e:
+            if i == attempts - 1:
+                logger.warning("JSON parsing failed for %s: %s", path, e)
+                return fallback
+            time.sleep(delay * (2 ** i))
+        except Exception as e:
+            logger.error("Error reading JSON %s: %s", path, e)
+            return fallback
+
+
 def _load_geocode_cache() -> dict:
     """Load geocode cache. Returns {clean_address: [lat, lng]}."""
-    try:
-        with open(GEOCODE_CACHE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except FileNotFoundError:
+    if not os.path.exists(GEOCODE_CACHE_FILE):
         logger.warning("Geocode cache not found: %s", GEOCODE_CACHE_FILE)
         return {}
-    except Exception as e:
-        logger.error("Failed to load geocode cache: %s", e)
+    data = _load_json_retry(GEOCODE_CACHE_FILE, attempts=3, delay=0.1, fallback={})
+    if not isinstance(data, dict):
+        logger.error("Failed to load geocode cache (invalid format): %s", GEOCODE_CACHE_FILE)
         return {}
+    return data
 
 
 def _clean_address(address: str) -> str:
@@ -147,8 +165,7 @@ def api_listings():
                 }
             ), 404
 
-        with open(LOCAL_SEEN_FILE, "r", encoding="utf-8") as f:
-            seen_data: dict = json.load(f)
+        seen_data = _load_json_retry(LOCAL_SEEN_FILE, attempts=3, delay=0.1, fallback={})
 
         # ── Process each entry ──────────────────────────────────────────────
         results = []
@@ -377,8 +394,7 @@ def api_schools():
         if not os.path.exists(SCHOOL_DATA_FILE):
             return jsonify({"schools": [], "stats": {"total": 0, "with_coords": 0}})
 
-        with open(SCHOOL_DATA_FILE, "r", encoding="utf-8") as f:
-            raw: list = json.load(f)
+        raw: list = _load_json_retry(SCHOOL_DATA_FILE, attempts=3, delay=0.1, fallback=[])
 
         schools = []
         for s in raw:
@@ -424,8 +440,7 @@ def api_ninkagai():
         if not os.path.exists(NINKAGAI_DATA_FILE):
             return jsonify({"schools": [], "stats": {"total": 0}})
 
-        with open(NINKAGAI_DATA_FILE, "r", encoding="utf-8") as f:
-            raw: list = json.load(f)
+        raw: list = _load_json_retry(NINKAGAI_DATA_FILE, attempts=3, delay=0.1, fallback=[])
 
         schools = []
         for s in raw:

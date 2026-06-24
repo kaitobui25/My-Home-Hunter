@@ -1,20 +1,55 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+venv/
+.venv/
+env/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.npm/
+
+# Runtime / generated artifacts
+*.log
+*.db
+*.sqlite
+*.tmp
 screenshot*.png
 page_source*.html
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+
 # Production/VPS seen listings (không cần sync)
 results/seen_listings/
 src/local/seen_listings.json
 
 # results-local/ được TRACK bởi git (sync across PCs)
 # Không ignore results-local/
-.vscode
-__pycache__
-.DS_Store
-.env
-*.log
-*.db
-*.sqlite
-venv
 
+# Local test scratch files
 test/*
 
 # Homes.co.jp specific

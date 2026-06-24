@@ -1542,46 +1542,58 @@
                         const count = cluster.getChildCount();
                         // Detect cluster state by children markers
                         const children = cluster.getAllChildMarkers();
-                        const allViewed = children.every((m) => {
-                            const listing = m.options._listing;
-                            if (!listing) return false;
-                            return viewedSet.has(listingId(listing));
-                        });
-                        const allSent = children.every(
-                            (m) => m.options._teleSent,
-                        );
-                        const noneSent = children.every(
-                            (m) => !m.options._teleSent,
-                        );
-                        const fill = allViewed
-                            ? "#64748b"
-                            : allSent
-                              ? "#34d399"
-                              : noneSent
-                                ? "#fb923c"
-                                : "#fbbf24";
-                        const border = allViewed
-                            ? "#334155"
-                            : allSent
-                              ? "#059669"
-                              : noneSent
-                                ? "#c2410c"
-                                : "#b45309";
-                        const size = count > 9 ? 28 : 22;
-                        return L.divIcon({
-                            className: "",
-                            html: `<div style="
+                        
+                       // Check if any marker is favorited (priority over other states)
+                       const hasFav = children.some((m) => m.options._isFaved);
+                        
+                       const allViewed = children.every((m) => {
+                           const listing = m.options._listing;
+                           if (!listing) return false;
+                           return viewedSet.has(listingId(listing));
+                       });
+                       const allSent = children.every(
+                           (m) => m.options._teleSent,
+                       );
+                       const noneSent = children.every(
+                           (m) => !m.options._teleSent,
+                       );
+                        
+                       // Priority: favorite > viewed > all-sent > mixed
+                       let fill, border, starIcon = "";
+                       if (hasFav) {
+                           fill = "#f472b6";
+                           border = "#be185d";
+                           starIcon = '<span style="position:absolute;font-size:9px;line-height:1;color:#fff;pointer-events:none;font-weight:700;">★</span>';
+                       } else if (allViewed) {
+                           fill = "#64748b";
+                           border = "#334155";
+                       } else if (allSent) {
+                           fill = "#34d399";
+                           border = "#059669";
+                       } else if (noneSent) {
+                           fill = "#fb923c";
+                           border = "#c2410c";
+                       } else {
+                           fill = "#fbbf24";
+                           border = "#b45309";
+                       }
+                        
+                       const size = count > 9 ? 28 : 22;
+                       return L.divIcon({
+                           className: "",
+                           html: `<div style="
+          position:relative;
           width:${size}px;height:${size}px;border-radius:50%;
           background:${fill};border:2.5px solid ${border};
           display:flex;align-items:center;justify-content:center;
           font-size:11px;font-weight:700;color:#0f1117;
           box-shadow:0 0 8px ${fill}88;
           font-family:'Inter',sans-serif;
-          ">${count}</div>`,
-                            iconSize: [size, size],
-                            iconAnchor: [size / 2, size / 2],
-                        });
-                    },
+          ">${count}${starIcon}</div>`,
+                           iconSize: [size, size],
+                           iconAnchor: [size / 2, size / 2],
+                       });
+                   },
                 });
 
                 // After a cluster spiderfies, individual markers animate outward (CSS, ~300ms).
@@ -1624,6 +1636,7 @@
                     const marker = L.marker([l.lat, l.lng], {
                         icon: makeHouseIcon(l, isViewed, isFaved, isNew),
                         _teleSent: l.tele_sent,
+                        _isFaved: isFaved,
                         _listing: l,
                     });
                     marker.bindPopup(buildPopup(l, lid), { maxWidth: 320 });

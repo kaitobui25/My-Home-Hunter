@@ -2252,6 +2252,8 @@
 
                 if (_pollTimer) clearInterval(_pollTimer);
                 _pollTimer = setInterval(_pollScrapeStatus, 2000);
+                // Trigger first poll immediately so UI shows pid/log without 2s delay
+                _pollScrapeStatus();
             }
 
             async function stopScrape() {
@@ -2314,6 +2316,8 @@
                 if (data.log && data.log.length) {
                     log.textContent = data.log.join("\n");
                     log.scrollTop = log.scrollHeight;
+                } else if (data.status === "running" && data.pid) {
+                    log.textContent = "[web] waiting for scraper output... pid=" + data.pid;
                 }
 
                 renderScrapeEta(data);

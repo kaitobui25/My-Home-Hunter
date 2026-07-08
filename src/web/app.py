@@ -590,6 +590,15 @@ _scrape_job: dict = {
     "finished_at": None,
     "stop_requested": False,
     "timed_out": False,
+    # reader thread diagnostics
+    "reader_started": None,
+    "reader_alive": False,
+    "reader_first_line_at": None,
+    "reader_ended_at": None,
+    "reader_error": None,
+    # thread object references (for .is_alive() checks)
+    "_reader_thread": None,
+    "_monitor_thread": None,
 }
 
 
@@ -671,6 +680,11 @@ def _try_parse_progress(text: str, job: dict) -> None:
 def _reader_thread_fn(proc, job):
     """Read stdout lines into job log (daemon — does not set final status)."""
     try:
+        with _scrape_lock:
+            job["reader_started"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            job["reader_alive"] = True
+            job["log"].append("[web] reader thread started")
+        _first = True
         for line in proc.stdout:
             with _scrape_lock:
                 raw = line.rstrip("\n")
@@ -678,8 +692,20 @@ def _reader_thread_fn(proc, job):
                 if len(job["log"]) > 500:
                     job["log"] = job["log"][-500:]
                 _try_parse_progress(raw, job)
-    except ValueError:
-        pass
+            if _first:
+                with _scrape_lock:
+                    job["reader_first_line_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                    job["log"].append("[web] reader received first line")
+                _first = False
+    except Exception as e:
+        with _scrape_lock:
+            job["reader_error"] = repr(e)
+            job["log"].append(f"[web] reader error: {e!r}")
+    finally:
+        with _scrape_lock:
+            job["reader_ended_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            job["reader_alive"] = False
+            job["log"].append("[web] reader thread ended")
 
 
 def _save_scrape_metrics(job: dict) -> None:
@@ -718,6 +744,8 @@ def _save_scrape_metrics(job: dict) -> None:
 
 def _monitor_thread_fn(proc, job):
     """Wait for process completion with timeout, then set final job status."""
+    with _scrape_lock:
+        job["log"].append("[web] monitor thread started")
     try:
         proc.wait(timeout=SCRAPER_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
@@ -735,6 +763,7 @@ def _monitor_thread_fn(proc, job):
             )
             job["proc"] = None
         logger.info("Scraper timed out after %ds", SCRAPER_TIMEOUT_SECONDS)
+        job["log"].append(f"[web] monitor: set status=timeout returncode={proc.returncode}")
         return
 
     with _scrape_lock:
@@ -747,6 +776,7 @@ def _monitor_thread_fn(proc, job):
         else:
             job["status"] = "error"
         job["proc"] = None
+        job["log"].append(f"[web] monitor: set status={job['status']} returncode={proc.returncode}")
 
     if job["status"] == "done":
         _save_scrape_metrics(job)
@@ -778,7 +808,7 @@ def api_scrape_start():
             _scrape_job.update(
                 {
                     "status": "running",
-                    "log": [],
+                    "log": [f"[web] Scraper started pid={proc.pid}"],
                     "returncode": None,
                     "proc": proc,
                     "pid": proc.pid,
@@ -788,14 +818,25 @@ def api_scrape_start():
                     "timed_out": False,
                     "progress_data": {},
                     "search_times": [],
+                    "reader_started": None,
+                    "reader_alive": False,
+                    "reader_first_line_at": None,
+                    "reader_ended_at": None,
+                    "reader_error": None,
+                    "_reader_thread": None,
+                    "_monitor_thread": None,
                 }
             )
-            threading.Thread(
+            reader_t = threading.Thread(
                 target=_reader_thread_fn, args=(proc, _scrape_job), daemon=True
-            ).start()
-            threading.Thread(
+            )
+            monitor_t = threading.Thread(
                 target=_monitor_thread_fn, args=(proc, _scrape_job), daemon=True
-            ).start()
+            )
+            reader_t.start()
+            monitor_t.start()
+            _scrape_job["_reader_thread"] = reader_t
+            _scrape_job["_monitor_thread"] = monitor_t
             logger.info("Scraper started (pid=%s)", proc.pid)
             return jsonify({"ok": True, "pid": proc.pid})
         except Exception as e:
@@ -828,10 +869,27 @@ def api_scrape_status():
             "status": _scrape_job["status"],
             "returncode": _scrape_job["returncode"],
             "log": _scrape_job["log"][-30:],
+            "log_count": len(_scrape_job["log"]),
             "pid": _scrape_job.get("pid"),
             "started_at": _scrape_job.get("started_at"),
             "finished_at": _scrape_job.get("finished_at"),
+            "reader_started": _scrape_job.get("reader_started"),
+            "reader_alive": _scrape_job.get("reader_alive", False),
+            "reader_first_line_at": _scrape_job.get("reader_first_line_at"),
+            "reader_ended_at": _scrape_job.get("reader_ended_at"),
+            "reader_error": _scrape_job.get("reader_error"),
         }
+
+        # proc_poll: check if process is still alive
+        proc = _scrape_job.get("proc")
+        if proc:
+            try:
+                ret = proc.poll()
+                response["proc_poll"] = ret
+            except Exception:
+                response["proc_poll"] = "error"
+        else:
+            response["proc_poll"] = None
 
         # ── Compute ETA / progress ──────────────────────────────────────
         progress = _scrape_job.get("progress_data", {})

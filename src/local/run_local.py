@@ -58,6 +58,22 @@ _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
+
+def _configure_console_encoding() -> None:
+    """Make console output safe on Windows terminals that use legacy code pages."""
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream is None:
+            continue
+        try:
+            if hasattr(stream, "reconfigure"):
+                stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
+_configure_console_encoding()
+
 from src.config import load_config, AppConfig, SearchConfig
 from src.filter import ListingFilter
 from src.notifier.telegram import TelegramNotifier
@@ -304,6 +320,7 @@ def run_local_search(
         "[%s] Result: %d total | %d new",
         search.name, len(all_listings), len(new_listings),
     )
+    logger.info("[%s] Processing %d new listings (geocode/filter/notify)...", search.name, len(new_listings))
 
     loc_cfg = config.filters.location_filter
 
@@ -691,7 +708,7 @@ Ví dụ:
 
     # ── Banner ──────────────────────────────────────────────────────────────
     print("\n" + "=" * 60)
-    print("  HOME-HUNTER — LOCAL RUNNER")
+    print("  HOME-HUNTER - LOCAL RUNNER")
     print("=" * 60)
     active_searches = [s for s in config.searches if s.enabled]
     print(f"  Active searches: {len(active_searches)}")

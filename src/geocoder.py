@@ -19,11 +19,11 @@ logger = logging.getLogger(__name__)
 
 
 class GeocoderService:
-    def __init__(self, cache_file: str = "results/geocode_cache.json"):
+    def __init__(self, cache_file: str = "results/geocode_cache.json", request_delay: float = 0.2):
         self.cache_file = cache_file
         self.cache = self._load_cache()
-        # Delay to be nice to public APIs (GSI doesn't strictly limit, but 1s is safe)
-        self.request_delay = 1.0 
+        # A shorter delay keeps the runner moving while remaining polite to the public API.
+        self.request_delay = request_delay
 
     def get_coordinates(self, address: str) -> Tuple[Optional[float], Optional[float]]:
         """Return (lat, lng) for an address, using cache if available."""
@@ -42,8 +42,9 @@ class GeocoderService:
 
         logger.info(f"Geocoding new address via GSI: {clean_addr}")
         try:
-            # Respect rate limit
-            time.sleep(self.request_delay)
+            # Respect rate limit without making the runner appear stalled.
+            if self.request_delay > 0:
+                time.sleep(self.request_delay)
             
             # Use Japanese Government (GSI) msearch API - highly accurate for Japan, free, no keys needed.
             encoded_addr = urllib.parse.quote(clean_addr)

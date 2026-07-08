@@ -55,3 +55,4 @@ test/*
 # Homes.co.jp specific
 homes_cookies.json
 
+results-local/

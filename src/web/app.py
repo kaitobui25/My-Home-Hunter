@@ -26,7 +26,7 @@ import subprocess
 import sys
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 from flask import Flask, jsonify, render_template, request
 
@@ -786,6 +786,8 @@ def api_scrape_start():
                     "finished_at": None,
                     "stop_requested": False,
                     "timed_out": False,
+                    "progress_data": {},
+                    "search_times": [],
                 }
             )
             threading.Thread(
@@ -839,8 +841,8 @@ def api_scrape_status():
         if started_at:
             try:
                 s = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
-                elapsed_seconds = (datetime.utcnow() - s).total_seconds()
-            except (ValueError, AttributeError):
+                elapsed_seconds = (datetime.now(timezone.utc) - s).total_seconds()
+            except (ValueError, AttributeError, TypeError):
                 pass
 
         # Historical averages for ETA estimation

@@ -131,10 +131,37 @@ def run_search(search: SearchConfig, config: AppConfig,
         logger.info("[%s] CSV saved: %s", search.name, csv_path)
 
     # Notify only matched new listings
+    telegram_active = bool(
+        telegram.cfg.enabled and telegram.cfg.bot_token and telegram.cfg.chat_id
+    )
+    telegram_ok = True
     if matched:
-        telegram.send_batch(matched, search_name=search.name)
+        if telegram_active:
+            sent_count = telegram.send_batch(matched, search_name=search.name)
+            if sent_count == 0:
+                telegram_ok = False
+                logger.warning(
+                    "[%s] Telegram notifications failed; will not mark new listings as seen.",
+                    search.name,
+                )
+        else:
+            logger.info("[%s] Telegram disabled or missing configuration; skipping notifications.", search.name)
     else:
         logger.info("[%s] No matching new listings to notify.", search.name)
+
+    if not matched or not telegram_active:
+        hunter.mark_seen(new_listings)
+    else:
+        if sent_count > 0:
+            hunter.mark_seen(matched[:sent_count])
+        nonmatched = [l for l in new_listings if l not in matched]
+        if nonmatched:
+            hunter.mark_seen(nonmatched)
+        if sent_count < len(matched):
+            logger.warning(
+                "[%s] %d/%d matched listings were not sent and will retry in the next run.",
+                search.name, len(matched) - sent_count, len(matched),
+            )
 
 
 def run_all(config: AppConfig, target_name: str | None = None):

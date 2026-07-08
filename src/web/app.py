@@ -186,9 +186,12 @@ def api_listings():
                 count_delisted += 1
                 continue
 
-            # Resolve coordinates from geocode cache
-            address = entry.get("address", "")
-            lat, lng = _resolve_coords(address, geocode_cache)
+            # Resolve coordinates from stored entry first, otherwise fallback to geocode cache
+            lat = entry.get("lat")
+            lng = entry.get("lng")
+            if lat is None or lng is None:
+                address = entry.get("address", "")
+                lat, lng = _resolve_coords(address, geocode_cache)
 
             if lat is None or lng is None:
                 count_no_coords += 1

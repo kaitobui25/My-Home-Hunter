@@ -109,7 +109,7 @@ filters:
 # ============================================================
 notifications:
   telegram:
-    enabled: true # Đổi thành true để bật
+    enabled: false # Đổi thành true để bật
     bot_token: "8617693255:AAFeIdE1OHnZbnselCI4TYkhp75wkTE9Pbo"
     chat_id: "7480163903"
     max_per_run: 100 # Gửi tối đa N tin mỗi lần chạy (tránh spam)
@@ -124,7 +124,7 @@ notifications:
 # ============================================================
 export:
   csv:
-    enabled: true
+    enabled: false
     output_dir: "results/csv"
     # Tên file: {name} = tên search, {date} = ngày (YYYY-MM-DD)
     filename: "{name}_{date}.csv"
@@ -139,5 +139,5 @@ list_schools:
   - name: "yodogawa ku ninka"
     type: ninka
     class: 1-year
-    enabled: true
+    enabled: false
     url: "https://www.city.osaka.lg.jp/yodogawa/page/0000230131.html"

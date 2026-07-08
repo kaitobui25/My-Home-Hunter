@@ -9,7 +9,10 @@ import logging
 import os
 from abc import ABC, abstractmethod
 
-from playwright.sync_api import sync_playwright
+try:
+    from playwright.sync_api import sync_playwright
+except ImportError:  # tests or environments may not have playwright installed
+    sync_playwright = None
 
 logger = logging.getLogger(__name__)
 
@@ -96,12 +99,16 @@ class AbstractHunter(ABC):
             self.search_name, len(self._all), len(self._new),
         )
 
-        # Persist new listings immediately
-        for listing in self._new:
-            self._seen[listing["url"]] = listing
-        self._save_seen()
-
         return self._all, self._new
+
+    def mark_seen(self, listings: list[dict]) -> None:
+        """Mark listings as processed in the global seen store."""
+        for listing in listings:
+            url = listing.get("url")
+            if not url:
+                continue
+            self._seen[url] = listing
+        self._save_seen()
 
     # ------------------------------------------------------------------
     # Persistence helpers

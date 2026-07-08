@@ -215,7 +215,7 @@ def _mark_as_seen(seen: dict, listing: dict, tele_sent: bool) -> dict:
     """
     Đăng ký một listing vào seen store.
     - tele_sent=True: đã gửi Telegram thành công
-    - tele_sent=False: đã scrape nhưng bị filter (không gửi)
+    - tele_sent=False: đã scrape nhưng chưa gửi hoặc bị filter
     """
     url = listing.get("url")
     if not url:
@@ -226,8 +226,8 @@ def _mark_as_seen(seen: dict, listing: dict, tele_sent: bool) -> dict:
     
     now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S+00:00")
     entry = {
-        **{k: v for k, v in listing.items() if k not in ("lat", "lng", "distance_km")},
-        "url": canon_url, # Ensure internal URL is also canonical
+        **listing,
+        "url": canon_url,  # Ensure internal URL is also canonical
         "tele_sent": tele_sent,
         "tele_sent_at": now_iso if tele_sent else None,
         "first_seen_at": seen.get(canon_url, {}).get("first_seen_at", now_iso),
@@ -309,18 +309,43 @@ def run_local_search(
         _canonical_url(l["url"]) for l in all_listings if l.get("url")
     }
 
-    # ── Deduplicate: chỉ xử lý listing chưa từng scrape được ────────────────
+    # ── Deduplicate: process listings that are new or still waiting for Telegram
     new_listings = [
-        l for l in all_listings 
+        l for l in all_listings
         if l.get("url") and _canonical_url(l["url"]) not in seen
     ]
+    pending_unsent = [
+        entry for entry in seen.values()
+        if not entry.get("tele_sent")
+        and entry.get("url")
+        and (
+            entry.get("search_name") == search.name
+            or entry.get("search_name") is None
+        )
+    ]
 
+    # Merge new scraped listings with existing pending entries.
+    # Prefer fresh scrape data for URLs found again this run.
+    candidates: dict[str, dict] = {}
+    for entry in pending_unsent:
+        canon = _canonical_url(entry["url"])
+        candidates[canon] = dict(entry)
+    for listing in new_listings:
+        canon = _canonical_url(listing["url"])
+        if canon in candidates:
+            listing["first_seen_at"] = candidates[canon].get("first_seen_at", listing.get("first_seen_at"))
+        candidates[canon] = listing
+
+    candidate_listings = list(candidates.values())
 
     logger.info(
-        "[%s] Result: %d total | %d new",
-        search.name, len(all_listings), len(new_listings),
+        "[%s] Result: %d total | %d new | %d pending unsent",
+        search.name, len(all_listings), len(new_listings), len(pending_unsent),
     )
-    logger.info("[%s] Processing %d new listings (geocode/filter/notify)...", search.name, len(new_listings))
+    logger.info(
+        "[%s] Processing %d listings (geocode/filter/notify)...",
+        search.name, len(candidate_listings),
+    )
 
     loc_cfg = config.filters.location_filter
 
@@ -338,10 +363,10 @@ def run_local_search(
                 "size": item.get("size_m2")
             })
 
-    # ── Filter new listings ──────────────────────────────────────────────────
+    # ── Filter candidate listings (new + pending unsent) ──────────────────────────────────────────────────
     matched = []
-    for listing in new_listings:
-        # Geocode incrementally for each newly found listing
+    for listing in candidate_listings:
+        # Geocode or reuse existing coordinates
         address = listing.get("address", "")
         if address:
             lat, lng = geocoder.get_coordinates(address)
@@ -358,7 +383,6 @@ def run_local_search(
             listing["lng"] = None
             listing["distance_km"] = None
 
-        # Persist early so map viewer can pick this listing immediately.
         listing["search_name"] = search.name
         _mark_as_seen(seen, listing, tele_sent=False)
         if callable(on_seen_updated):
@@ -374,12 +398,12 @@ def run_local_search(
                     dist or 999, loc_cfg.max_distance_km, listing.get("url"),
                 )
                 continue
-        
+
         # Cross-portal deduplication bằng fingerprint fuzzy distance (< 200m)
         lat, lng = listing.get("lat"), listing.get("lng")
         price = listing.get("price_man_yen")
         size = listing.get("size_m2")
-        
+
         is_dup = False
         if lat is not None and lng is not None and price is not None and size is not None:
             for fp in seen_fps:
@@ -388,11 +412,11 @@ def run_local_search(
                     if dist <= 0.2:
                         is_dup = True
                         break
-            
+
             if is_dup:
                 logger.debug("DEDUPED (Fingerprint): %s -> %s", listing.get("name"), listing.get("url"))
                 continue
-                
+
             seen_fps.append({"lat": lat, "lng": lng, "price": price, "size": size})
 
         matched.append(listing)
@@ -411,11 +435,18 @@ def run_local_search(
 
     # ── Notify và Persist seen ─────────────────────────────────────────────────────────────
     if matched:
-        telegram.send_batch(matched, search_name=f"[LOCAL] {search.name}")
-        for listing in matched:
-            _mark_as_seen(seen, listing, tele_sent=True)
-            if callable(on_seen_updated):
-                on_seen_updated(seen)
+        sent_count = telegram.send_batch(matched, search_name=f"[LOCAL] {search.name}")
+        if sent_count > 0:
+            now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S+00:00")
+            for listing in matched[:sent_count]:
+                _mark_as_seen(seen, listing, tele_sent=True)
+                if callable(on_seen_updated):
+                    on_seen_updated(seen)
+        if sent_count < len(matched):
+            logger.warning(
+                "[%s] Only %d/%d matched listings were sent. Remaining will retry.",
+                search.name, sent_count, len(matched),
+            )
     else:
         logger.info("[%s] No matching new listings to notify.", search.name)
 

@@ -866,6 +866,9 @@ def api_scrape_status():
                 "eta_seconds": round(eta_seconds, 1) if eta_seconds is not None else None,
                 "progress": f"{current_index} / {total}" if (current_index is not None and total is not None) else None,
                 "current_search": current_search,
+                "listing_processed": progress.get("processed"),
+                "listing_total": progress.get("total_listings"),
+                "listing_matched": progress.get("matched"),
             }
         )
 

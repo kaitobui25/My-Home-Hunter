@@ -2187,6 +2187,11 @@
                 if (data.current_search) {
                     parts.push("\ud83d\udd0d \u73fe\u5728: " + data.current_search);
                 }
+                if (data.listing_processed !== null && data.listing_processed !== undefined) {
+                    const total = data.listing_total ?? "?";
+                    const matched = data.listing_matched ?? 0;
+                    parts.push("\ud83d\udccb Listings: " + data.listing_processed + " / " + total + " | matched: " + matched);
+                }
                 el.textContent = parts.join(" | ");
                 el.style.display = "block";
             }

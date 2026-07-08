@@ -50,7 +50,7 @@ import os
 import sys
 import time
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 from urllib.parse import urlparse, urlunparse
 
 # ── Ensure project root is on the path khi chạy trực tiếp ──────────────────
@@ -224,7 +224,7 @@ def _mark_as_seen(seen: dict, listing: dict, tele_sent: bool) -> dict:
     # Use canonical URL as the stable key
     canon_url = _canonical_url(url)
     
-    now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00")
     entry = {
         **listing,
         "url": canon_url,  # Ensure internal URL is also canonical
@@ -372,7 +372,13 @@ def run_local_search(
 
     # ── Filter candidate listings (new + pending unsent) ──────────────────────────────────────────────────
     matched = []
-    for listing in candidate_listings:
+    total_candidates = len(candidate_listings)
+    process_start_time = time.perf_counter()
+    save_counter = 0
+
+    for idx, listing in enumerate(candidate_listings):
+        listing_start = time.perf_counter()
+
         # Geocode or reuse existing coordinates
         address = listing.get("address", "")
         if address:
@@ -392,8 +398,20 @@ def run_local_search(
 
         listing["search_name"] = search.name
         _mark_as_seen(seen, listing, tele_sent=False)
-        if callable(on_seen_updated):
-            on_seen_updated(seen)
+        save_counter += 1
+        if save_counter >= 50:
+            if callable(on_seen_updated):
+                on_seen_updated(seen)
+            save_counter = 0
+
+        # ── Slow listing diagnostics ──
+        listing_elapsed = time.perf_counter() - listing_start
+        if listing_elapsed > 5:
+            logger.warning(
+                "[%s] SLOW listing (%.1fs): %s | %s | %s",
+                search.name, listing_elapsed,
+                listing.get("name", "?"), address, listing.get("url", "?"),
+            )
 
         if not listing_filter.matches(listing):
             continue
@@ -435,6 +453,25 @@ def run_local_search(
             listing.get("url"),
         )
 
+        # ── Listing progress logging + HH_PROGRESS ──
+        processed = idx + 1
+        if processed % 50 == 0 or processed == total_candidates:
+            elapsed = time.perf_counter() - process_start_time
+            logger.info(
+                "[%s] Listing progress: %d/%d processed | matched: %d | elapsed: %.1fs",
+                search.name, processed, total_candidates, len(matched), elapsed,
+            )
+            _emit_progress(
+                processed=processed,
+                total_listings=total_candidates,
+                matched=len(matched),
+                search_name=search.name,
+            )
+
+    # ── Final batch save for non-Telegram listings ──
+    if save_counter > 0 and callable(on_seen_updated):
+        on_seen_updated(seen)
+
     logger.info(
         "[%s] %d new | %d matched filter → sending Telegram",
         search.name, len(new_listings), len(matched),
@@ -444,11 +481,11 @@ def run_local_search(
     if matched:
         sent_count = telegram.send_batch(matched, search_name=f"[LOCAL] {search.name}")
         if sent_count > 0:
-            now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S+00:00")
+            now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00")
             for listing in matched[:sent_count]:
                 _mark_as_seen(seen, listing, tele_sent=True)
-                if callable(on_seen_updated):
-                    on_seen_updated(seen)
+            if callable(on_seen_updated):
+                on_seen_updated(seen)
         if sent_count < len(matched):
             logger.warning(
                 "[%s] Only %d/%d matched listings were sent. Remaining will retry.",
@@ -577,7 +614,7 @@ def run_refilter(
 
     for sname, listings in groups.items():
         telegram.send_batch(listings, search_name=f"[LOCAL] {sname}")
-        now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S+00:00")
+        now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00")
         for listing in listings:
             url = listing.get("url")
             if url and url in seen:
@@ -672,7 +709,7 @@ def run_all(config: AppConfig, target_name: str | None, headless: bool) -> None:
         return None
 
     if site_canonical:
-        now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S+00:00")
+        now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00")
         count_dl = 0
         for url, entry in seen.items():
             sk = _url_site(url)

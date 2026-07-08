@@ -44,6 +44,7 @@ Lưu ý:
 from __future__ import annotations
 
 import argparse
+import faulthandler
 import json
 import logging
 import os
@@ -87,6 +88,10 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger("local.runner")
+
+# ── Fault handler: dump traceback every 60s if process appears stuck ─────
+faulthandler.dump_traceback_later(60, repeat=True)
+logger.info("[Diag] faulthandler enabled — stack trace every 60s if stuck")
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 LOCAL_DIR = os.path.dirname(__file__)
@@ -420,6 +425,9 @@ def run_local_search(
     for idx, listing in enumerate(candidate_listings):
         listing_start = time.perf_counter()
         processed = idx + 1
+        _listing_url = listing.get("url", "?")
+        _listing_name = listing.get("name", "?")
+        _listing_addr = listing.get("address", "")
 
         # outcome trackers (set before continue → visible in finally)
         is_matched = False
@@ -428,18 +436,39 @@ def run_local_search(
         deduped = False
         geocode_failed = False
         no_address = False
+        _diag_step = None
+        _geocode_elapsed = 0.0
+        _save_elapsed = 0.0
+        _filter_elapsed = 0.0
+        _dedup_elapsed = 0.0
+
+        def _warn_slow(step_name: str, elapsed: float):
+            if elapsed > 3.0:
+                logger.warning(
+                    "[Diag][%s] SLOW step (%.1fs) at listing %d/%d | step=%s | url=%s | name=%s | addr=%s",
+                    search.name, elapsed, processed, total_candidates,
+                    step_name, _listing_url, _listing_name, _listing_addr,
+                )
 
         try:
-            # Geocode or reuse existing coordinates
+            # ── Geocode ──
             address = listing.get("address", "")
             if address:
+                _diag_step = "geocode_get_coordinates"
+                _t0 = time.perf_counter()
                 lat, lng = geocoder.get_coordinates(address)
+                _t1 = time.perf_counter()
+                _warn_slow("geocoder.get_coordinates", _t1 - _t0)
                 listing["lat"] = lat
                 listing["lng"] = lng
                 if lat is not None and lng is not None and loc_cfg.enabled:
+                    _diag_step = "geocode_calc_distance"
+                    _t0 = time.perf_counter()
                     listing["distance_km"] = geocoder.calculate_distance(
                         lat, lng, loc_cfg.center_lat, loc_cfg.center_lng
                     )
+                    _t1 = time.perf_counter()
+                    _warn_slow("geocoder.calculate_distance", _t1 - _t0)
                 else:
                     listing["distance_km"] = None
                 if lat is None or lng is None:
@@ -449,30 +478,42 @@ def run_local_search(
                 listing["lat"] = None
                 listing["lng"] = None
                 listing["distance_km"] = None
+            _geocode_elapsed = time.perf_counter() - listing_start
 
+            # ── Mark as seen ──
+            _diag_step = "mark_as_seen"
             listing["search_name"] = search.name
+            _t0 = time.perf_counter()
             _mark_as_seen(seen, listing, tele_sent=False)
+            _t1 = time.perf_counter()
+            _warn_slow("_mark_as_seen", _t1 - _t0)
             save_counter += 1
             now_t = time.perf_counter()
             if save_counter >= SAVE_EVERY_LISTINGS or (now_t - last_save_time) >= SAVE_EVERY_SECONDS:
+                _diag_step = "on_seen_updated"
+                _t0 = time.perf_counter()
                 if callable(on_seen_updated):
                     on_seen_updated(seen)
+                _t1 = time.perf_counter()
+                _warn_slow("on_seen_updated", _t1 - _t0)
                 save_counter = 0
                 last_save_time = now_t
+            _save_elapsed = time.perf_counter() - listing_start - _geocode_elapsed
 
-            # ── Slow listing diagnostics ──
-            listing_elapsed = time.perf_counter() - listing_start
-            if listing_elapsed > 5:
-                logger.warning(
-                    "[%s] SLOW listing (%.1fs): %s | %s | %s",
-                    search.name, listing_elapsed,
-                    listing.get("name", "?"), address, listing.get("url", "?"),
-                )
-
-            if not listing_filter.matches(listing):
+            # ── ListingFilter.matches ──
+            _diag_step = "listing_filter.matches"
+            _t0 = time.perf_counter()
+            _filter_result = listing_filter.matches(listing)
+            _t1 = time.perf_counter()
+            _warn_slow("listing_filter.matches", _t1 - _t0)
+            if not _filter_result:
                 filtered_out = True
                 continue
+            _filter_elapsed = time.perf_counter() - listing_start - _geocode_elapsed - _save_elapsed
+
+            # ── Distance filter ──
             if loc_cfg.enabled:
+                _diag_step = "distance_filter"
                 dist = listing.get("distance_km")
                 if dist is None or dist > loc_cfg.max_distance_km:
                     logger.debug(
@@ -482,19 +523,23 @@ def run_local_search(
                     distance_filtered = True
                     continue
 
-            # Cross-portal deduplication bằng fingerprint fuzzy distance (< 200m)
+            # ── Dedup ──
+            _diag_step = "dedup_loop"
             lat, lng = listing.get("lat"), listing.get("lng")
             price = listing.get("price_man_yen")
             size = listing.get("size_m2")
 
             is_dup = False
             if lat is not None and lng is not None and price is not None and size is not None:
+                _t0 = time.perf_counter()
                 for fp in seen_fps:
                     if fp["price"] == price and fp["size"] == size:
                         dist = geocoder.calculate_distance(lat, lng, fp["lat"], fp["lng"])
                         if dist <= 0.2:
                             is_dup = True
                             break
+                _t1 = time.perf_counter()
+                _warn_slow("dedup_loop", _t1 - _t0)
 
                 if is_dup:
                     logger.debug("DEDUPED (Fingerprint): %s -> %s", listing.get("name"), listing.get("url"))
@@ -502,6 +547,7 @@ def run_local_search(
                     continue
 
                 seen_fps.append({"lat": lat, "lng": lng, "price": price, "size": size})
+            _dedup_elapsed = time.perf_counter() - listing_start - _geocode_elapsed - _save_elapsed - _filter_elapsed
 
             matched.append(listing)
             is_matched = True
@@ -524,6 +570,17 @@ def run_local_search(
                 geocode_failed_count += 1
             if no_address:
                 no_address_count += 1
+
+            # ── Per-listing timing log (every 25 listings) ──
+            _listing_total_elapsed = time.perf_counter() - listing_start
+            if processed % 25 == 0 or processed == total_candidates or _listing_total_elapsed > 5:
+                logger.info(
+                    "[Diag][%s] Listing %d/%d done | total=%.1fs geo=%.1fs save=%.1fs flt=%.1fs dedup=%.1fs | url=%s | name=%s",
+                    search.name, processed, total_candidates,
+                    _listing_total_elapsed,
+                    _geocode_elapsed, _save_elapsed, _filter_elapsed, _dedup_elapsed,
+                    _listing_url, _listing_name,
+                )
 
             # ── Listing progress logging + HH_PROGRESS (runs for EVERY listing) ──
             if processed % 50 == 0 or processed == total_candidates:

@@ -236,6 +236,13 @@ def _mark_as_seen(seen: dict, listing: dict, tele_sent: bool) -> dict:
     return seen
 
 
+# ── Progress emission ─────────────────────────────────────────────────────────
+
+def _emit_progress(**data):
+    """Print a machine-readable progress line for the web UI to parse."""
+    print("HH_PROGRESS " + json.dumps(data, ensure_ascii=False), flush=True)
+
+
 # ── Core runner ──────────────────────────────────────────────────────────────
 
 def run_local_search(
@@ -605,7 +612,19 @@ def run_all(config: AppConfig, target_name: str | None, headless: bool) -> None:
     # Per-site canonical URLs collected across ALL searches (for delist pass)
     site_canonical: dict[str, set] = {}  # e.g. {"suumo": {url1, url2}, "nifty": {...}}
 
+    _emit_progress(run_start=True, total=len(active_searches))
+    _run_start_time = time.perf_counter()
+
     for i, search in enumerate(active_searches):
+        search_start_time = time.perf_counter()
+        _emit_progress(
+            search_start=True,
+            search_name=search.name,
+            site=search.site or "suumo",
+            index=i + 1,
+            total=len(active_searches),
+        )
+
         seen, canonical_urls = run_local_search(
             search=search,
             config=config,
@@ -621,6 +640,16 @@ def run_all(config: AppConfig, target_name: str | None, headless: bool) -> None:
             sk = search.site or "suumo"
             site_canonical.setdefault(sk, set()).update(canonical_urls)
 
+        search_elapsed = time.perf_counter() - search_start_time
+        _emit_progress(
+            search_done=True,
+            search_name=search.name,
+            site=search.site or "suumo",
+            index=i + 1,
+            total=len(active_searches),
+            seconds=round(search_elapsed, 1),
+        )
+
         _save_local_seen(seen)
 
         if i < len(active_searches) - 1:
@@ -628,6 +657,9 @@ def run_all(config: AppConfig, target_name: str | None, headless: bool) -> None:
             if delay > 0:
                 logger.info("Sleeping %ds before next search...", delay)
                 time.sleep(delay)
+
+    total_elapsed = time.perf_counter() - _run_start_time
+    _emit_progress(run_done=True, total_seconds=round(total_elapsed, 1))
 
     logger.info("All local searches completed. Total seen (cumulative): %d", len(seen))
 

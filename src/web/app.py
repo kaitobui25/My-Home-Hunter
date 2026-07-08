@@ -26,6 +26,7 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import datetime
 
 from flask import Flask, jsonify, render_template, request
 
@@ -576,6 +577,7 @@ def api_config_edit_post():
 # ── Scraper endpoints ───────────────────────────────────────────────────────────────
 
 SCRAPER_TIMEOUT_SECONDS = int(os.environ.get("HOME_HUNTER_SCRAPER_TIMEOUT_SECONDS", "900"))
+SCRAPE_METRICS_FILE = os.path.join(_PROJECT_ROOT, "results-local", "scrape_metrics.json")
 
 _scrape_lock = threading.Lock()
 _scrape_job: dict = {
@@ -638,16 +640,80 @@ def _terminate_process_tree(proc, grace_seconds=5):
             pass
 
 
+def _try_parse_progress(text: str, job: dict) -> None:
+    """Parse HH_PROGRESS lines from scraper stdout into job progress_data. Never raises."""
+    if not text.startswith("HH_PROGRESS "):
+        return
+    try:
+        data = json.loads(text[len("HH_PROGRESS "):])
+    except (json.JSONDecodeError, ValueError):
+        return
+
+    if data.get("run_start"):
+        job["progress_data"] = dict(data)
+        job["search_times"] = []
+        return
+
+    if "progress_data" not in job:
+        job["progress_data"] = {}
+    job["progress_data"].update(data)
+
+    if data.get("search_done"):
+        if "search_times" not in job:
+            job["search_times"] = []
+        job["search_times"].append({
+            "search_name": data.get("search_name"),
+            "site": data.get("site"),
+            "seconds": data.get("seconds"),
+        })
+
+
 def _reader_thread_fn(proc, job):
     """Read stdout lines into job log (daemon — does not set final status)."""
     try:
         for line in proc.stdout:
             with _scrape_lock:
-                job["log"].append(line.rstrip("\n"))
+                raw = line.rstrip("\n")
+                job["log"].append(raw)
                 if len(job["log"]) > 500:
                     job["log"] = job["log"][-500:]
+                _try_parse_progress(raw, job)
     except ValueError:
         pass
+
+
+def _save_scrape_metrics(job: dict) -> None:
+    """Append a metrics entry for a completed successful run. Best-effort, never raises."""
+    metrics = _load_json_retry(SCRAPE_METRICS_FILE, fallback=[])
+    progress = job.get("progress_data", {})
+
+    total_seconds = progress.get("total_seconds")
+    if total_seconds is None:
+        started_at = job.get("started_at")
+        finished_at = job.get("finished_at")
+        if started_at and finished_at:
+            try:
+                s = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+                f = datetime.fromisoformat(finished_at.replace("Z", "+00:00"))
+                total_seconds = (f - s).total_seconds()
+            except (ValueError, AttributeError):
+                pass
+
+    entry = {
+        "started_at": job.get("started_at"),
+        "finished_at": job.get("finished_at"),
+        "total_seconds": round(total_seconds, 1) if total_seconds is not None else None,
+        "searches": job.get("search_times", []),
+    }
+    metrics.append(entry)
+    if len(metrics) > 20:
+        metrics = metrics[-20:]
+    try:
+        os.makedirs(os.path.dirname(SCRAPE_METRICS_FILE), exist_ok=True)
+        with open(SCRAPE_METRICS_FILE, "w", encoding="utf-8") as f:
+            json.dump(metrics, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.warning("Failed to save scrape metrics: %s", e)
 
 
 def _monitor_thread_fn(proc, job):
@@ -681,6 +747,9 @@ def _monitor_thread_fn(proc, job):
         else:
             job["status"] = "error"
         job["proc"] = None
+
+    if job["status"] == "done":
+        _save_scrape_metrics(job)
     logger.info("Scraper finished with returncode=%s", proc.returncode)
 
 
@@ -751,18 +820,54 @@ def api_scrape_stop():
 
 @app.route("/api/scrape/status", methods=["GET"])
 def api_scrape_status():
-    """Return current scraper status + last 30 log lines."""
+    """Return current scraper status + last 30 log lines + ETA info."""
     with _scrape_lock:
-        return jsonify(
+        response = {
+            "status": _scrape_job["status"],
+            "returncode": _scrape_job["returncode"],
+            "log": _scrape_job["log"][-30:],
+            "pid": _scrape_job.get("pid"),
+            "started_at": _scrape_job.get("started_at"),
+            "finished_at": _scrape_job.get("finished_at"),
+        }
+
+        # ── Compute ETA / progress ──────────────────────────────────────
+        progress = _scrape_job.get("progress_data", {})
+
+        elapsed_seconds = None
+        started_at = _scrape_job.get("started_at")
+        if started_at:
+            try:
+                s = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+                elapsed_seconds = (datetime.utcnow() - s).total_seconds()
+            except (ValueError, AttributeError):
+                pass
+
+        # Historical averages for ETA estimation
+        estimated_total_seconds = None
+        eta_seconds = None
+        metrics = _load_json_retry(SCRAPE_METRICS_FILE, fallback=[])
+        successful = [m for m in metrics if m.get("total_seconds")]
+        if successful:
+            estimated_total_seconds = sum(m["total_seconds"] for m in successful) / len(successful)
+            if elapsed_seconds is not None:
+                eta_seconds = max(0.0, estimated_total_seconds - elapsed_seconds)
+
+        current_search = progress.get("search_name")
+        current_index = progress.get("index")
+        total = progress.get("total")
+
+        response.update(
             {
-                "status": _scrape_job["status"],
-                "returncode": _scrape_job["returncode"],
-                "log": _scrape_job["log"][-30:],
-                "pid": _scrape_job.get("pid"),
-                "started_at": _scrape_job.get("started_at"),
-                "finished_at": _scrape_job.get("finished_at"),
+                "elapsed_seconds": round(elapsed_seconds, 1) if elapsed_seconds is not None else None,
+                "estimated_total_seconds": round(estimated_total_seconds, 1) if estimated_total_seconds is not None else None,
+                "eta_seconds": round(eta_seconds, 1) if eta_seconds is not None else None,
+                "progress": f"{current_index} / {total}" if (current_index is not None and total is not None) else None,
+                "current_search": current_search,
             }
         )
+
+        return jsonify(response)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

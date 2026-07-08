@@ -667,6 +667,18 @@
                 word-break: break-all;
                 display: none; /* hidden until scrape starts */
             }
+            #scrape-eta {
+                margin-top: 4px;
+                padding: 6px 8px;
+                background: rgba(0, 0, 0, 0.3);
+                border: 1px solid var(--border);
+                border-radius: 6px;
+                font-size: 11px;
+                color: var(--text-dim);
+                font-family: monospace;
+                line-height: 1.5;
+                display: none;
+            }
             @keyframes pulse-new {
                 0%,
                 100% {
@@ -1070,6 +1082,7 @@
                     ■ 停止
                 </button>
                 <div id="scrape-status"></div>
+                <div id="scrape-eta"></div>
                 <pre id="scrape-log"></pre>
 
                 <button id="btn-refresh" onclick="loadData()">
@@ -2144,6 +2157,40 @@
             loadData();
             loadConfigValues();
             // ── Scraper UI ─────────────────────────────────────────────────────────────────
+            function fmtDuration(sec) {
+                if (sec === null || sec === undefined) return "--:--";
+                const m = Math.floor(sec / 60);
+                const s = Math.floor(sec % 60);
+                return String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
+            }
+
+            function renderScrapeEta(data) {
+                const el = document.getElementById("scrape-eta");
+                if (!el) return;
+                const isActive = data.status === "running" || data.status === "stopping";
+                if (!isActive) {
+                    el.style.display = "none";
+                    return;
+                }
+                const parts = [];
+                if (data.elapsed_seconds !== null) {
+                    parts.push("\u23f1 \u7d4c\u904e: " + fmtDuration(data.elapsed_seconds));
+                }
+                if (data.eta_seconds !== null) {
+                    parts.push("\u231b \u6b8b\u308a\u4e88\u60f3: \u7d04 " + fmtDuration(data.eta_seconds));
+                } else {
+                    parts.push("\u231b \u6b8b\u308a\u4e88\u60f3: \u5b66\u7fd2\u4e2d");
+                }
+                if (data.progress) {
+                    parts.push("\ud83d\udcca \u9032\u6357: " + data.progress);
+                }
+                if (data.current_search) {
+                    parts.push("\ud83d\udd0d \u73fe\u5728: " + data.current_search);
+                }
+                el.textContent = parts.join(" | ");
+                el.style.display = "block";
+            }
+
             let _pollTimer = null;
             let _liveRefreshTick = 0;
             let _pollFailCount = 0;
@@ -2253,6 +2300,8 @@
                     log.textContent = data.log.join("\n");
                     log.scrollTop = log.scrollHeight;
                 }
+
+                renderScrapeEta(data);
 
                 if (data.status === "running") {
                     _liveRefreshTick += 1;

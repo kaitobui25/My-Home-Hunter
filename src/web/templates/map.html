@@ -2190,7 +2190,11 @@
                 if (data.listing_processed !== null && data.listing_processed !== undefined) {
                     const total = data.listing_total ?? "?";
                     const matched = data.listing_matched ?? 0;
-                    parts.push("\ud83d\udccb Listings: " + data.listing_processed + " / " + total + " | matched: " + matched);
+                    const filtered = data.listing_filtered ?? 0;
+                    const distFilt = data.listing_distance_filtered ?? 0;
+                    const deduped = data.listing_deduped ?? 0;
+                    const geoFail = data.listing_geocode_failed ?? 0;
+                    parts.push("\ud83d\udccb Listings: " + data.listing_processed + " / " + total + " | matched: " + matched + " | filt: " + filtered + " | dist: " + distFilt + " | dup: " + deduped + " | geo: " + geoFail);
                 }
                 el.textContent = parts.join(" | ");
                 el.style.display = "block";

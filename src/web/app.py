@@ -869,6 +869,11 @@ def api_scrape_status():
                 "listing_processed": progress.get("processed"),
                 "listing_total": progress.get("total_listings"),
                 "listing_matched": progress.get("matched"),
+                "listing_filtered": progress.get("filtered"),
+                "listing_distance_filtered": progress.get("distance_filtered"),
+                "listing_deduped": progress.get("deduped"),
+                "listing_geocode_failed": progress.get("geocode_failed"),
+                "listing_no_address": progress.get("no_address"),
             }
         )
 

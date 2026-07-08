@@ -375,98 +375,150 @@ def run_local_search(
     total_candidates = len(candidate_listings)
     process_start_time = time.perf_counter()
     save_counter = 0
+    filtered_count = 0
+    distance_filtered_count = 0
+    deduped_count = 0
+    geocode_failed_count = 0
+    no_address_count = 0
+
+    # Initial progress: indicate processing started
+    _emit_progress(
+        listing_progress=True,
+        search_name=search.name,
+        processed=0,
+        total_listings=total_candidates,
+        matched=0,
+        filtered=0, distance_filtered=0, deduped=0,
+        geocode_failed=0, no_address=0,
+    )
 
     for idx, listing in enumerate(candidate_listings):
         listing_start = time.perf_counter()
-
-        # Geocode or reuse existing coordinates
-        address = listing.get("address", "")
-        if address:
-            lat, lng = geocoder.get_coordinates(address)
-            listing["lat"] = lat
-            listing["lng"] = lng
-            if lat is not None and lng is not None and loc_cfg.enabled:
-                listing["distance_km"] = geocoder.calculate_distance(
-                    lat, lng, loc_cfg.center_lat, loc_cfg.center_lng
-                )
-            else:
-                listing["distance_km"] = None
-        else:
-            listing["lat"] = None
-            listing["lng"] = None
-            listing["distance_km"] = None
-
-        listing["search_name"] = search.name
-        _mark_as_seen(seen, listing, tele_sent=False)
-        save_counter += 1
-        if save_counter >= 50:
-            if callable(on_seen_updated):
-                on_seen_updated(seen)
-            save_counter = 0
-
-        # ── Slow listing diagnostics ──
-        listing_elapsed = time.perf_counter() - listing_start
-        if listing_elapsed > 5:
-            logger.warning(
-                "[%s] SLOW listing (%.1fs): %s | %s | %s",
-                search.name, listing_elapsed,
-                listing.get("name", "?"), address, listing.get("url", "?"),
-            )
-
-        if not listing_filter.matches(listing):
-            continue
-        if loc_cfg.enabled:
-            dist = listing.get("distance_km")
-            if dist is None or dist > loc_cfg.max_distance_km:
-                logger.debug(
-                    "FILTERED distance %.1f > max %.1f [%s]",
-                    dist or 999, loc_cfg.max_distance_km, listing.get("url"),
-                )
-                continue
-
-        # Cross-portal deduplication bằng fingerprint fuzzy distance (< 200m)
-        lat, lng = listing.get("lat"), listing.get("lng")
-        price = listing.get("price_man_yen")
-        size = listing.get("size_m2")
-
-        is_dup = False
-        if lat is not None and lng is not None and price is not None and size is not None:
-            for fp in seen_fps:
-                if fp["price"] == price and fp["size"] == size:
-                    dist = geocoder.calculate_distance(lat, lng, fp["lat"], fp["lng"])
-                    if dist <= 0.2:
-                        is_dup = True
-                        break
-
-            if is_dup:
-                logger.debug("DEDUPED (Fingerprint): %s -> %s", listing.get("name"), listing.get("url"))
-                continue
-
-            seen_fps.append({"lat": lat, "lng": lng, "price": price, "size": size})
-
-        matched.append(listing)
-        logger.info(
-            "[%s] MATCHED: %s (Dist: %s) - %s",
-            search.name,
-            listing.get("name"),
-            f"{listing.get('distance_km', 0):.2f} km" if listing.get('distance_km') is not None else "N/A",
-            listing.get("url"),
-        )
-
-        # ── Listing progress logging + HH_PROGRESS ──
         processed = idx + 1
-        if processed % 50 == 0 or processed == total_candidates:
-            elapsed = time.perf_counter() - process_start_time
+
+        # outcome trackers (set before continue → visible in finally)
+        is_matched = False
+        filtered_out = False
+        distance_filtered = False
+        deduped = False
+        geocode_failed = False
+        no_address = False
+
+        try:
+            # Geocode or reuse existing coordinates
+            address = listing.get("address", "")
+            if address:
+                lat, lng = geocoder.get_coordinates(address)
+                listing["lat"] = lat
+                listing["lng"] = lng
+                if lat is not None and lng is not None and loc_cfg.enabled:
+                    listing["distance_km"] = geocoder.calculate_distance(
+                        lat, lng, loc_cfg.center_lat, loc_cfg.center_lng
+                    )
+                else:
+                    listing["distance_km"] = None
+                if lat is None or lng is None:
+                    geocode_failed = True
+            else:
+                no_address = True
+                listing["lat"] = None
+                listing["lng"] = None
+                listing["distance_km"] = None
+
+            listing["search_name"] = search.name
+            _mark_as_seen(seen, listing, tele_sent=False)
+            save_counter += 1
+            if save_counter >= 50:
+                if callable(on_seen_updated):
+                    on_seen_updated(seen)
+                save_counter = 0
+
+            # ── Slow listing diagnostics ──
+            listing_elapsed = time.perf_counter() - listing_start
+            if listing_elapsed > 5:
+                logger.warning(
+                    "[%s] SLOW listing (%.1fs): %s | %s | %s",
+                    search.name, listing_elapsed,
+                    listing.get("name", "?"), address, listing.get("url", "?"),
+                )
+
+            if not listing_filter.matches(listing):
+                filtered_out = True
+                continue
+            if loc_cfg.enabled:
+                dist = listing.get("distance_km")
+                if dist is None or dist > loc_cfg.max_distance_km:
+                    logger.debug(
+                        "FILTERED distance %.1f > max %.1f [%s]",
+                        dist or 999, loc_cfg.max_distance_km, listing.get("url"),
+                    )
+                    distance_filtered = True
+                    continue
+
+            # Cross-portal deduplication bằng fingerprint fuzzy distance (< 200m)
+            lat, lng = listing.get("lat"), listing.get("lng")
+            price = listing.get("price_man_yen")
+            size = listing.get("size_m2")
+
+            is_dup = False
+            if lat is not None and lng is not None and price is not None and size is not None:
+                for fp in seen_fps:
+                    if fp["price"] == price and fp["size"] == size:
+                        dist = geocoder.calculate_distance(lat, lng, fp["lat"], fp["lng"])
+                        if dist <= 0.2:
+                            is_dup = True
+                            break
+
+                if is_dup:
+                    logger.debug("DEDUPED (Fingerprint): %s -> %s", listing.get("name"), listing.get("url"))
+                    deduped = True
+                    continue
+
+                seen_fps.append({"lat": lat, "lng": lng, "price": price, "size": size})
+
+            matched.append(listing)
+            is_matched = True
             logger.info(
-                "[%s] Listing progress: %d/%d processed | matched: %d | elapsed: %.1fs",
-                search.name, processed, total_candidates, len(matched), elapsed,
+                "[%s] MATCHED: %s (Dist: %s) - %s",
+                search.name,
+                listing.get("name"),
+                f"{listing.get('distance_km', 0):.2f} km" if listing.get('distance_km') is not None else "N/A",
+                listing.get("url"),
             )
-            _emit_progress(
-                processed=processed,
-                total_listings=total_candidates,
-                matched=len(matched),
-                search_name=search.name,
-            )
+        finally:
+            # ── Accumulate counters ──
+            if filtered_out:
+                filtered_count += 1
+            if distance_filtered:
+                distance_filtered_count += 1
+            if deduped:
+                deduped_count += 1
+            if geocode_failed:
+                geocode_failed_count += 1
+            if no_address:
+                no_address_count += 1
+
+            # ── Listing progress logging + HH_PROGRESS (runs for EVERY listing) ──
+            if processed % 50 == 0 or processed == total_candidates:
+                elapsed = time.perf_counter() - process_start_time
+                logger.info(
+                    "[%s] Listing progress: %d/%d processed | matched=%d | filtered=%d | distance=%d | deduped=%d | geocode_failed=%d | elapsed=%.1fs",
+                    search.name, processed, total_candidates, len(matched),
+                    filtered_count, distance_filtered_count, deduped_count,
+                    geocode_failed_count, elapsed,
+                )
+                _emit_progress(
+                    listing_progress=True,
+                    search_name=search.name,
+                    processed=processed,
+                    total_listings=total_candidates,
+                    matched=len(matched),
+                    filtered=filtered_count,
+                    distance_filtered=distance_filtered_count,
+                    deduped=deduped_count,
+                    geocode_failed=geocode_failed_count,
+                    no_address=no_address_count,
+                )
 
     # ── Final batch save for non-Telegram listings ──
     if save_counter > 0 and callable(on_seen_updated):

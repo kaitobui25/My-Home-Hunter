@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -574,22 +575,111 @@ def api_config_edit_post():
 
 # ── Scraper endpoints ───────────────────────────────────────────────────────────────
 
+SCRAPER_TIMEOUT_SECONDS = int(os.environ.get("HOME_HUNTER_SCRAPER_TIMEOUT_SECONDS", "900"))
+
 _scrape_lock = threading.Lock()
-_scrape_job: dict = {"status": "idle", "log": [], "returncode": None, "proc": None}
+_scrape_job: dict = {
+    "status": "idle",
+    "log": [],
+    "returncode": None,
+    "proc": None,
+    "pid": None,
+    "started_at": None,
+    "finished_at": None,
+    "stop_requested": False,
+    "timed_out": False,
+}
 
 
-def _drain_proc(proc, job: dict) -> None:
-    """Background thread: collect output and update job status when done."""
-    for line in proc.stdout:
+def _terminate_process_tree(proc, grace_seconds=5):
+    """Kill subprocess and all its children. Prefer psutil; fallback to taskkill on Windows."""
+    pid = proc.pid
+    try:
+        import psutil
+
+        try:
+            parent = psutil.Process(pid)
+        except psutil.NoSuchProcess:
+            return
+        children = parent.children(recursive=True)
+        for child in children:
+            try:
+                child.terminate()
+            except psutil.NoSuchProcess:
+                pass
+        try:
+            parent.terminate()
+        except psutil.NoSuchProcess:
+            pass
+        gone, alive = psutil.wait_procs(
+            children + [parent], timeout=grace_seconds
+        )
+        for p in alive:
+            try:
+                p.kill()
+            except psutil.NoSuchProcess:
+                pass
+        return
+    except ImportError:
+        pass
+
+    if sys.platform == "win32":
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(pid)],
+            capture_output=True,
+            timeout=10,
+        )
+    else:
+        try:
+            os.kill(pid, signal.SIGTERM)
+            time.sleep(grace_seconds)
+            os.kill(pid, signal.SIGKILL)
+        except (ProcessLookupError, OSError):
+            pass
+
+
+def _reader_thread_fn(proc, job):
+    """Read stdout lines into job log (daemon — does not set final status)."""
+    try:
+        for line in proc.stdout:
+            with _scrape_lock:
+                job["log"].append(line.rstrip("\n"))
+                if len(job["log"]) > 500:
+                    job["log"] = job["log"][-500:]
+    except ValueError:
+        pass
+
+
+def _monitor_thread_fn(proc, job):
+    """Wait for process completion with timeout, then set final job status."""
+    try:
+        proc.wait(timeout=SCRAPER_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        _terminate_process_tree(proc)
+        proc.wait()
         with _scrape_lock:
-            job["log"].append(line.rstrip("\n"))
-    proc.wait()
+            job["status"] = "timeout"
+            job["timed_out"] = True
+            job["returncode"] = proc.returncode
+            job["finished_at"] = time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+            )
+            job["log"].append(
+                f"[web] Scraper timed out after {SCRAPER_TIMEOUT_SECONDS}s. Process tree killed."
+            )
+            job["proc"] = None
+        logger.info("Scraper timed out after %ds", SCRAPER_TIMEOUT_SECONDS)
+        return
+
     with _scrape_lock:
         job["returncode"] = proc.returncode
-        if job.get("status") == "stopping":
+        job["finished_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        if job.get("stop_requested"):
             job["status"] = "stopped"
+        elif proc.returncode == 0:
+            job["status"] = "done"
         else:
-            job["status"] = "done" if proc.returncode == 0 else "error"
+            job["status"] = "error"
         job["proc"] = None
     logger.info("Scraper finished with returncode=%s", proc.returncode)
 
@@ -598,29 +688,45 @@ def _drain_proc(proc, job: dict) -> None:
 def api_scrape_start():
     """Launch run_local --headless in a background subprocess."""
     with _scrape_lock:
-        if _scrape_job["status"] == "running":
+        if _scrape_job["status"] in ("running", "stopping"):
             return jsonify({"error": "Scraper is already running"}), 409
+
+        creationflags = 0
+        if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
+            creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+
         try:
             proc = subprocess.Popen(
-                [sys.executable, "-m", "src.local.run_local", "--headless"],
+                [sys.executable, "-u", "-m", "src.local.run_local", "--headless"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
+                bufsize=1,
                 text=True,
                 cwd=_PROJECT_ROOT,
+                creationflags=creationflags,
             )
+            now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             _scrape_job.update(
                 {
                     "status": "running",
                     "log": [],
                     "returncode": None,
                     "proc": proc,
+                    "pid": proc.pid,
+                    "started_at": now,
+                    "finished_at": None,
+                    "stop_requested": False,
+                    "timed_out": False,
                 }
             )
             threading.Thread(
-                target=_drain_proc, args=(proc, _scrape_job), daemon=True
+                target=_reader_thread_fn, args=(proc, _scrape_job), daemon=True
+            ).start()
+            threading.Thread(
+                target=_monitor_thread_fn, args=(proc, _scrape_job), daemon=True
             ).start()
             logger.info("Scraper started (pid=%s)", proc.pid)
-            return jsonify({"ok": True})
+            return jsonify({"ok": True, "pid": proc.pid})
         except Exception as e:
             logger.exception("Failed to start scraper")
             _scrape_job["status"] = "error"
@@ -629,24 +735,17 @@ def api_scrape_start():
 
 @app.route("/api/scrape/stop", methods=["POST"])
 def api_scrape_stop():
-    """Stop the running scraper subprocess."""
+    """Stop the running scraper: kill full process tree."""
     with _scrape_lock:
         proc = _scrape_job.get("proc")
-        if _scrape_job.get("status") != "running" or proc is None:
+        if _scrape_job["status"] != "running" or proc is None:
             return jsonify({"error": "Scraper is not running"}), 409
+        _scrape_job["stop_requested"] = True
         _scrape_job["status"] = "stopping"
         _scrape_job["log"].append("[web] Stop requested by user...")
 
-    try:
-        proc.terminate()
-    except Exception as e:
-        logger.exception("Failed to terminate scraper process")
-        with _scrape_lock:
-            _scrape_job["status"] = "error"
-            _scrape_job["log"].append(f"[web] Stop failed: {e}")
-        return jsonify({"error": str(e)}), 500
-
-    logger.info("Stop signal sent to scraper (pid=%s)", proc.pid)
+    _terminate_process_tree(proc)
+    logger.info("Stop requested for scraper (pid=%s)", proc.pid)
     return jsonify({"ok": True})
 
 
@@ -659,6 +758,9 @@ def api_scrape_status():
                 "status": _scrape_job["status"],
                 "returncode": _scrape_job["returncode"],
                 "log": _scrape_job["log"][-30:],
+                "pid": _scrape_job.get("pid"),
+                "started_at": _scrape_job.get("started_at"),
+                "finished_at": _scrape_job.get("finished_at"),
             }
         )
 

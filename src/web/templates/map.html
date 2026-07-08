@@ -2146,6 +2146,7 @@
             // ── Scraper UI ─────────────────────────────────────────────────────────────────
             let _pollTimer = null;
             let _liveRefreshTick = 0;
+            let _pollFailCount = 0;
 
             async function startScrape() {
                 const btn = document.getElementById("btn-scrape");
@@ -2228,8 +2229,24 @@
                     const res = await fetch("/api/scrape/status");
                     data = await res.json();
                 } catch {
+                    _pollFailCount += 1;
+                    if (_pollFailCount >= 5) {
+                        clearInterval(_pollTimer);
+                        _pollTimer = null;
+                        _liveRefreshTick = 0;
+                        _pollFailCount = 0;
+                        btn.disabled = false;
+                        btn.textContent = "\u25b6 \u30c7\u30fc\u30bf\u53d6\u5f97\u5b9f\u884c";
+                        stopBtn.style.display = "none";
+                        stopBtn.disabled = false;
+                        status.style.color = "var(--red)";
+                        status.textContent = "\u2717 \u901a\u4fe1\u30a8\u30e9\u30fc";
+                        _preSnapshotIds = null;
+                        _scrapeStartedAtMs = null;
+                    }
                     return;
                 }
+                _pollFailCount = 0;
 
                 // Update log
                 if (data.log && data.log.length) {
@@ -2242,7 +2259,7 @@
                     if (_liveRefreshTick % 5 === 0) {
                         await loadData({ silent: true });
                     }
-                    return; // still going
+                    return;
                 }
                 if (data.status === "stopping") {
                     status.style.color = "var(--orange)";
@@ -2250,20 +2267,18 @@
                     return;
                 }
 
-                // Done or error
+                // Terminal state: always reset UI
                 clearInterval(_pollTimer);
                 _pollTimer = null;
                 _liveRefreshTick = 0;
                 btn.disabled = false;
+                btn.textContent = "\u25b6 \u30c7\u30fc\u30bf\u53d6\u5f97\u5b9f\u884c";
                 stopBtn.style.display = "none";
                 stopBtn.disabled = false;
 
                 if (data.status === "done") {
                     status.style.color = "var(--green)";
-                    status.textContent =
-                        "\u2713 \u5b8c\u4e86 \u2014 \u5730\u56f3\u3092\u66f4\u65b0\u4e2d...";
-                    btn.textContent =
-                        "\u25b6 \u30c7\u30fc\u30bf\u53d6\u5f97\u5b9f\u884c";
+                    status.textContent = "\u2713 \u5b8c\u4e86 \u2014 \u5730\u56f3\u3092\u66f4\u65b0\u4e2d...";
                     await loadData();
                     const n = newSet.size;
                     status.textContent =
@@ -2274,19 +2289,17 @@
                 } else if (data.status === "stopped") {
                     status.style.color = "var(--orange)";
                     status.textContent = "\u25a0 \u505c\u6b62\u3057\u307e\u3057\u305f";
-                    btn.textContent =
-                        "\u25b6 \u30c7\u30fc\u30bf\u53d6\u5f97\u5b9f\u884c";
+                    _preSnapshotIds = null;
+                    _scrapeStartedAtMs = null;
+                } else if (data.status === "timeout") {
+                    status.style.color = "var(--orange)";
+                    status.textContent = "\u2717 \u30bf\u30a4\u30e0\u30a2\u30a6\u30c8";
                     _preSnapshotIds = null;
                     _scrapeStartedAtMs = null;
                 } else {
                     status.style.color = "var(--red)";
-                    status.textContent =
-                        "\u2717 \u30a8\u30e9\u30fc (returncode=" +
-                        data.returncode +
-                        ")";
-                    btn.textContent =
-                        "\u25b6 \u30c7\u30fc\u30bf\u53d6\u5f97\u5b9f\u884c";
-                    _preSnapshotIds = null; // discard snapshot on error
+                    status.textContent = "\u2717 \u30a8\u30e9\u30fc (returncode=" + data.returncode + ")";
+                    _preSnapshotIds = null;
                     _scrapeStartedAtMs = null;
                 }
             }

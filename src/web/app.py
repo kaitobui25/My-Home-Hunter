@@ -874,6 +874,9 @@ def api_scrape_status():
                 "listing_deduped": progress.get("deduped"),
                 "listing_geocode_failed": progress.get("geocode_failed"),
                 "listing_no_address": progress.get("no_address"),
+                "phase": progress.get("phase"),
+                "phase_message": progress.get("message"),
+                "heartbeat": progress.get("heartbeat"),
             }
         )
 

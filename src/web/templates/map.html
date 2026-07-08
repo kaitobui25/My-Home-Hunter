@@ -2196,6 +2196,12 @@
                     const geoFail = data.listing_geocode_failed ?? 0;
                     parts.push("\ud83d\udccb Listings: " + data.listing_processed + " / " + total + " | matched: " + matched + " | filt: " + filtered + " | dist: " + distFilt + " | dup: " + deduped + " | geo: " + geoFail);
                 }
+                if (data.phase) {
+                    parts.push("\u2699\ufe0f Phase: " + data.phase);
+                }
+                if (data.phase_message) {
+                    parts.push(data.phase_message);
+                }
                 el.textContent = parts.join(" | ");
                 el.style.display = "block";
             }

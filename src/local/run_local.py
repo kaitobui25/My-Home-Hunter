@@ -96,6 +96,10 @@ _PROJECT_ROOT_ALIAS = os.path.abspath(os.path.join(LOCAL_DIR, "..", ".."))
 RESULTS_LOCAL_DIR = os.path.join(_PROJECT_ROOT_ALIAS, "results-local")
 LOCAL_SEEN_FILE = os.path.join(RESULTS_LOCAL_DIR, "local_seen_listings.json")
 
+# Save-frequency: reduce I/O pressure during filtering loop
+SAVE_EVERY_LISTINGS = 500
+SAVE_EVERY_SECONDS = 15
+
 
 # ── URL helpers ──────────────────────────────────────────────────────────────
 
@@ -184,6 +188,7 @@ def _atomic_replace_with_retry(src: str, dst: str, attempts: int = 5, delay: flo
 
 def _save_local_seen(seen: dict) -> None:
     """Persist the local seen_listings store vào results-local/ using atomic write with replace-retry."""
+    started = time.perf_counter()
     try:
         os.makedirs(RESULTS_LOCAL_DIR, exist_ok=True)
         # Write to a temp file in the same directory then atomically replace.
@@ -202,13 +207,15 @@ def _save_local_seen(seen: dict) -> None:
             except Exception:
                 pass
             raise
+        elapsed = time.perf_counter() - started
         tele_sent_count = sum(1 for v in seen.values() if v.get("tele_sent"))
-        logger.debug(
-            "[Local] Saved %d seen listings (%d sent to Telegram) to: %s",
-            len(seen), tele_sent_count, LOCAL_SEEN_FILE,
+        logger.info(
+            "[Local] Saved %d seen listings (%d sent) in %.1fs: %s",
+            len(seen), tele_sent_count, elapsed, LOCAL_SEEN_FILE,
         )
     except IOError as e:
-        logger.error("[Local] Failed to save seen_listings: %s", e)
+        elapsed = time.perf_counter() - started
+        logger.error("[Local] Failed to save seen_listings in %.1fs: %s", elapsed, e)
 
 
 def _mark_as_seen(seen: dict, listing: dict, tele_sent: bool) -> dict:
@@ -241,6 +248,21 @@ def _mark_as_seen(seen: dict, listing: dict, tele_sent: bool) -> dict:
 def _emit_progress(**data):
     """Print a machine-readable progress line for the web UI to parse."""
     print("HH_PROGRESS " + json.dumps(data, ensure_ascii=False), flush=True)
+
+
+_LAST_HEARTBEAT: float = 0.0
+
+
+def _emit_phase(phase: str, search_name: str | None = None, message: str | None = None, **extra):
+    """Emit a named phase event so the web UI always knows what the scraper is doing."""
+    payload: dict = {"phase": phase}
+    if search_name:
+        payload["search_name"] = search_name
+    if message:
+        payload["message"] = message
+    payload.update(extra)
+    _emit_progress(**payload)
+    logger.info("[Phase] %s%s", phase, f" - {message}" if message else "")
 
 
 # ── Core runner ──────────────────────────────────────────────────────────────
@@ -375,11 +397,14 @@ def run_local_search(
     total_candidates = len(candidate_listings)
     process_start_time = time.perf_counter()
     save_counter = 0
+    last_save_time = time.perf_counter()
     filtered_count = 0
     distance_filtered_count = 0
     deduped_count = 0
     geocode_failed_count = 0
     no_address_count = 0
+
+    _emit_phase("filtering_listings", search_name=search.name, message="Processing listings", total_listings=total_candidates)
 
     # Initial progress: indicate processing started
     _emit_progress(
@@ -428,10 +453,12 @@ def run_local_search(
             listing["search_name"] = search.name
             _mark_as_seen(seen, listing, tele_sent=False)
             save_counter += 1
-            if save_counter >= 50:
+            now_t = time.perf_counter()
+            if save_counter >= SAVE_EVERY_LISTINGS or (now_t - last_save_time) >= SAVE_EVERY_SECONDS:
                 if callable(on_seen_updated):
                     on_seen_updated(seen)
                 save_counter = 0
+                last_save_time = now_t
 
             # ── Slow listing diagnostics ──
             listing_elapsed = time.perf_counter() - listing_start
@@ -520,9 +547,26 @@ def run_local_search(
                     no_address=no_address_count,
                 )
 
+    # ── Emit filter_done with final counters ──
+    _emit_phase(
+        "filter_done",
+        search_name=search.name,
+        message="Listing filtering completed",
+        processed=total_candidates,
+        total_listings=total_candidates,
+        matched=len(matched),
+        filtered=filtered_count,
+        distance_filtered=distance_filtered_count,
+        deduped=deduped_count,
+        geocode_failed=geocode_failed_count,
+        no_address=no_address_count,
+    )
+
     # ── Final batch save for non-Telegram listings ──
+    _emit_phase("saving_seen_db", search_name=search.name, message="Saving local seen DB")
     if save_counter > 0 and callable(on_seen_updated):
         on_seen_updated(seen)
+    _emit_phase("saved_seen_db", search_name=search.name, message="Local seen DB saved")
 
     logger.info(
         "[%s] %d new | %d matched filter → sending Telegram",
@@ -531,7 +575,9 @@ def run_local_search(
 
     # ── Notify và Persist seen ─────────────────────────────────────────────────────────────
     if matched:
+        _emit_phase("notifying_telegram", search_name=search.name, message=f"Sending {len(matched)} listings to Telegram")
         sent_count = telegram.send_batch(matched, search_name=f"[LOCAL] {search.name}")
+        _emit_phase("telegram_done", search_name=search.name, message=f"Sent {sent_count}/{len(matched)} listings", matched=len(matched), sent=sent_count)
         if sent_count > 0:
             now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00")
             for listing in matched[:sent_count]:
@@ -545,6 +591,7 @@ def run_local_search(
             )
     else:
         logger.info("[%s] No matching new listings to notify.", search.name)
+        _emit_phase("telegram_done", search_name=search.name, message="No listings to notify", matched=0, sent=0)
 
     return seen, canonical_scraped
 
@@ -713,6 +760,7 @@ def run_all(config: AppConfig, target_name: str | None, headless: bool) -> None:
             index=i + 1,
             total=len(active_searches),
         )
+        _emit_phase("scraping", search_name=search.name, message=f"Scraping {search.site or 'suumo'}")
 
         seen, canonical_urls = run_local_search(
             search=search,
@@ -730,6 +778,7 @@ def run_all(config: AppConfig, target_name: str | None, headless: bool) -> None:
             site_canonical.setdefault(sk, set()).update(canonical_urls)
 
         search_elapsed = time.perf_counter() - search_start_time
+        _emit_phase("search_done", search_name=search.name, message=f"Search completed in {search_elapsed:.0f}s", seconds=round(search_elapsed, 1), matched=len(canonical_urls))
         _emit_progress(
             search_done=True,
             search_name=search.name,
@@ -753,14 +802,13 @@ def run_all(config: AppConfig, target_name: str | None, headless: bool) -> None:
     logger.info("All local searches completed. Total seen (cumulative): %d", len(seen))
 
     # ── Delist pass: compare ALL scraped URLs per site vs DB ────────────────────
-    # Runs once after ALL searches so a listing found in any search for that
-    # site is NOT delisted, even if it didn't appear in every search.
     def _url_site(url: str) -> str | None:
         if "nifty.com" in url:  return "nifty"
         if "suumo.jp"  in url:  return "suumo"
         return None
 
     if site_canonical:
+        _emit_phase("delist_pass", message="Checking for delisted listings")
         now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00")
         count_dl = 0
         for url, entry in seen.items():
@@ -778,6 +826,7 @@ def run_all(config: AppConfig, target_name: str | None, headless: bool) -> None:
                     entry["delisted_at"] = now_iso
                     count_dl += 1
                     logger.debug("Delisting: %s", entry.get("name", url))
+        _emit_phase("delist_done", message=f"Delist pass complete: {count_dl} listings marked as gone", delisted=count_dl)
         if count_dl:
             logger.info("Delist pass: marked %d listing(s) as gone from site.", count_dl)
         _save_local_seen(seen)
@@ -786,6 +835,7 @@ def run_all(config: AppConfig, target_name: str | None, headless: bool) -> None:
     if config.list_schools:
         active_schools = [s for s in config.list_schools if s.enabled]
         if active_schools:
+            _emit_phase("school_search", message=f"Running {len(active_schools)} school vacancy search(es)")
             logger.info("Running %d school vacancy search(es) locally", len(active_schools))
             for school_search in active_schools:
                 try:
@@ -811,6 +861,9 @@ def run_all(config: AppConfig, target_name: str | None, headless: bool) -> None:
                         logger.info("[%s] No vacancies found or scrape empty.", school_search.name)
                 except Exception as e:
                     logger.error("School search [%s] failed: %s", school_search.name, e)
+            _emit_phase("school_search_done", message="School vacancy searches completed")
+
+    _emit_phase("run_done", message=f"All done in {total_elapsed:.0f}s", total_seconds=round(total_elapsed, 1))
 
 
 # ── Entry point ──────────────────────────────────────────────────────────────

@@ -294,6 +294,11 @@ def run_local_search(
     # We temporarily override general.headless to run with a real browser
     original_headless = config.general.headless
     config.general.headless = headless
+    telegram_active = bool(
+        telegram.cfg.enabled
+        and telegram.cfg.bot_token
+        and telegram.cfg.chat_id
+    )
 
     try:
         site = search.site  # auto-detected from URL in config.py
@@ -332,7 +337,8 @@ def run_local_search(
                 f"Site phát hiện bot ngay cả trên máy local. "
                 f"Thử mở web bằng trình duyệt thật trước, rồi chạy lại."
             )
-            telegram.send_text(msg)
+            if telegram_active:
+                telegram.send_text(msg)
         all_listings = []
     finally:
         config.general.headless = original_headless
@@ -348,15 +354,19 @@ def run_local_search(
         l for l in all_listings
         if l.get("url") and _canonical_url(l["url"]) not in seen
     ]
-    pending_unsent = [
-        entry for entry in seen.values()
-        if not entry.get("tele_sent")
-        and entry.get("url")
-        and (
-            entry.get("search_name") == search.name
-            or entry.get("search_name") is None
-        )
-    ]
+    if telegram_active:
+        pending_unsent = [
+            entry for entry in seen.values()
+            if not entry.get("tele_sent")
+            and entry.get("url")
+            and (
+                entry.get("search_name") == search.name
+                or entry.get("search_name") is None
+            )
+        ]
+    else:
+        pending_unsent = []
+        logger.info("[%s] Telegram disabled; skipping pending_unsent retry.", search.name)
 
     # Merge new scraped listings with existing pending entries.
     # Prefer fresh scrape data for URLs found again this run.
@@ -625,13 +635,19 @@ def run_local_search(
         on_seen_updated(seen)
     _emit_phase("saved_seen_db", search_name=search.name, message="Local seen DB saved")
 
-    logger.info(
-        "[%s] %d new | %d matched filter → sending Telegram",
-        search.name, len(new_listings), len(matched),
-    )
+    if telegram_active:
+        logger.info(
+            "[%s] %d new | %d matched filter → sending Telegram",
+            search.name, len(new_listings), len(matched),
+        )
+    else:
+        logger.info(
+            "[%s] %d new | %d matched filter | Telegram inactive",
+            search.name, len(new_listings), len(matched),
+        )
 
     # ── Notify và Persist seen ─────────────────────────────────────────────────────────────
-    if matched:
+    if matched and telegram_active:
         _emit_phase("notifying_telegram", search_name=search.name, message=f"Sending {len(matched)} listings to Telegram")
         sent_count = telegram.send_batch(matched, search_name=f"[LOCAL] {search.name}")
         _emit_phase("telegram_done", search_name=search.name, message=f"Sent {sent_count}/{len(matched)} listings", matched=len(matched), sent=sent_count)
@@ -646,6 +662,9 @@ def run_local_search(
                 "[%s] Only %d/%d matched listings were sent. Remaining will retry.",
                 search.name, sent_count, len(matched),
             )
+    elif matched:
+        logger.info("[%s] Telegram disabled or missing configuration; skipping notifications.", search.name)
+        _emit_phase("telegram_done", search_name=search.name, message="Telegram disabled; notifications skipped", matched=len(matched), sent=0)
     else:
         logger.info("[%s] No matching new listings to notify.", search.name)
         _emit_phase("telegram_done", search_name=search.name, message="No listings to notify", matched=0, sent=0)

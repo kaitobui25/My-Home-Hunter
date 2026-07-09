@@ -79,7 +79,7 @@ filters:
     center_lat: 34.739561
     center_lng: 135.465117
     # Bán kính tối đa (km)
-    max_distance_km: 1.3
+    max_distance_km: 0.7
 
   # --- Chỉ áp dụng cho rental (thuê nhà) ---
   rental:

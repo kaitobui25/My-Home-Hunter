@@ -11,6 +11,7 @@ All configuration is read from config.yaml.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import signal
 import sys
@@ -34,6 +35,19 @@ def _handle_signal(sig, frame):
 
 signal.signal(signal.SIGINT, _handle_signal)
 signal.signal(signal.SIGTERM, _handle_signal)
+
+
+def _format_elapsed(seconds: float) -> str:
+    """Format elapsed seconds as compact human-readable time."""
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+
+    minutes, remaining_seconds = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{int(minutes)}m {remaining_seconds:.1f}s"
+
+    hours, remaining_minutes = divmod(int(minutes), 60)
+    return f"{hours}h {remaining_minutes:02d}m {remaining_seconds:.1f}s"
 
 
 # ---------------------------------------------------------------------------
@@ -76,12 +90,19 @@ def run_search(search: SearchConfig, config: AppConfig,
                telegram: TelegramNotifier,
                geocoder: GeocoderService):
     """Run a single search: scrape → filter → export → notify."""
+    search_started_at = time.perf_counter()
     logger.info("=" * 60)
     logger.info("Starting search: [%s] (%s)", search.name, search.type)
+    logger.info("[%s] Search started", search.name)
     logger.info("=" * 60)
 
     hunter = create_hunter(search, config)
     all_listings, new_listings = hunter.run()
+    logger.info(
+        "[%s] Scrape completed in %s",
+        search.name,
+        _format_elapsed(time.perf_counter() - search_started_at),
+    )
 
     # Geocode and calculate distance for ALL listings (so CSV has them)
     loc_cfg = config.filters.location_filter
@@ -163,9 +184,35 @@ def run_search(search: SearchConfig, config: AppConfig,
                 search.name, len(matched) - sent_count, len(matched),
             )
 
+    elapsed = time.perf_counter() - search_started_at
+    summary = {
+        "search_name": search.name,
+        "elapsed_sec": round(elapsed, 1),
+        "total": len(all_listings),
+        "new": len(new_listings),
+        "matched": len(matched),
+    }
+    logger.info(
+        "[%s] Finished in %s | total=%d | new=%d | matched=%d",
+        search.name,
+        _format_elapsed(elapsed),
+        summary["total"],
+        summary["new"],
+        summary["matched"],
+    )
+    logger.info(
+        "HH_SEARCH_SUMMARY %s",
+        json.dumps(summary, ensure_ascii=False, separators=(",", ":")),
+    )
+    return summary
+
 
 def run_all(config: AppConfig, target_name: str | None = None):
     """Run all enabled searches (or just one if target_name is set)."""
+    run_started_at = time.perf_counter()
+    success_count = 0
+    failed_count = 0
+
     listing_filter = ListingFilter(config.filters)
     csv_exporter = CSVExporter(config.export.csv)
     telegram = TelegramNotifier(config.notifications.telegram)
@@ -179,14 +226,53 @@ def run_all(config: AppConfig, target_name: str | None = None):
     if not searches_to_run:
         logger.warning("No enabled searches found%s.",
                        f" matching '{target_name}'" if target_name else "")
+        elapsed = time.perf_counter() - run_started_at
+        logger.info(
+            "Run completed in %s | searches=0 | success=0 | failed=0",
+            _format_elapsed(elapsed),
+        )
+        logger.info(
+            "HH_RUN_SUMMARY %s",
+            json.dumps(
+                {
+                    "elapsed_sec": round(elapsed, 1),
+                    "searches": 0,
+                    "success": 0,
+                    "failed": 0,
+                },
+                separators=(",", ":"),
+            ),
+        )
         return
 
     for i, search in enumerate(searches_to_run):
         if _shutdown:
             break
+        search_started_at = time.perf_counter()
         try:
             run_search(search, config, listing_filter, csv_exporter, telegram, geocoder)
         except Exception as e:
+            failed_count += 1
+            elapsed = time.perf_counter() - search_started_at
+            logger.info(
+                "[%s] Failed in %s | total=0 | new=0 | matched=0",
+                search.name,
+                _format_elapsed(elapsed),
+            )
+            logger.info(
+                "HH_SEARCH_SUMMARY %s",
+                json.dumps(
+                    {
+                        "search_name": search.name,
+                        "elapsed_sec": round(elapsed, 1),
+                        "total": 0,
+                        "new": 0,
+                        "matched": 0,
+                    },
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ),
+            )
             logger.error("Search '%s' failed: %s", search.name, e, exc_info=True)
             if "WAF_BLOCK" in str(e):
                 msg = (
@@ -195,12 +281,35 @@ def run_all(config: AppConfig, target_name: str | None = None):
                     f"Cookie đã hết hạn hoặc IP bị chặn. Vui lòng lấy lại Cookie mới ở máy cá nhân và đè vào file `nifty_cookies.json` trên VPS!"
                 )
                 telegram.send_text(msg)
+        else:
+            success_count += 1
             
         if i < len(searches_to_run) - 1 and not _shutdown:
             delay = config.general.delay_between_searches
             if delay > 0:
                 logger.info("Sleeping %d seconds before next search to free up RAM...", delay)
                 _sleep_interruptible(delay)
+
+    elapsed = time.perf_counter() - run_started_at
+    logger.info(
+        "Run completed in %s | searches=%d | success=%d | failed=%d",
+        _format_elapsed(elapsed),
+        len(searches_to_run),
+        success_count,
+        failed_count,
+    )
+    logger.info(
+        "HH_RUN_SUMMARY %s",
+        json.dumps(
+            {
+                "elapsed_sec": round(elapsed, 1),
+                "searches": len(searches_to_run),
+                "success": success_count,
+                "failed": failed_count,
+            },
+            separators=(",", ":"),
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------

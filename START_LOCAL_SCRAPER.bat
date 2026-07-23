@@ -1,31 +1,37 @@
 @echo off
-TITLE Home Hunter - Local Scraper
+TITLE Home Hunter - Progressive Local Scraper
 setlocal
 cd /d "%~dp0"
 
-:: Set color to yellow on black
 color 0E
 
 echo ============================================================
-echo   🔍 HOME HUNTER - DANG QUET TIN MOI (LOCAL)
+echo   HOME HUNTER - DANG QUET TIN MOI (PROGRESSIVE)
 echo ============================================================
 echo.
 
-:: Detect virtual environment
 if exist venv\Scripts\activate.bat (
     call venv\Scripts\activate.bat
 ) else if exist .venv\Scripts\activate.bat (
     call .venv\Scripts\activate.bat
 )
 
-echo [System] Dang bat dau qua trinh quet...
-echo          (Trinh duyet se mo ra de vuot WAF)
+echo [System] Bat dau quet tung trang va cap nhat Map Viewer ngay.
 echo.
 
-:: Run Scraper
-python -m src.local.run_local --headless
+python -m src.local.run_local_v2 --headless
+set "SCRAPER_EXIT=%ERRORLEVEL%"
 
 echo.
+if not "%SCRAPER_EXIT%"=="0" (
+    echo ------------------------------------------------------------
+    echo [LOI] Scraper dung voi ma loi %SCRAPER_EXIT%.
+    echo Kiem tra log phia tren; khong danh dau la da quet xong.
+    echo ------------------------------------------------------------
+    pause
+    exit /b %SCRAPER_EXIT%
+)
+
 echo ------------------------------------------------------------
 echo [XONG] Da quet xong! Kiem tra Telegram hoac Map Viewer.
 echo ------------------------------------------------------------

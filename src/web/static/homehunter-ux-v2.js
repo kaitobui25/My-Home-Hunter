@@ -101,10 +101,13 @@
         }
     };
 
+    let saveQueue = Promise.resolve();
     const saveMapState = () => {
-        void persistMapState().catch((error) => {
-            console.warn("Could not save map state:", error);
-        });
+        saveQueue = saveQueue
+            .then(persistMapState)
+            .catch((error) => {
+                console.warn("Could not save map state:", error);
+            });
     };
 
     if (typeof markViewed === "function") {
@@ -155,18 +158,26 @@
             }
 
             const state = await response.json();
-            (state.viewed || []).forEach((id) => viewedSet.add(id));
-            (state.favorites || []).forEach((id) => favedSet.add(id));
 
-            updateViewedStat();
-            updateFavStat();
-            setFilter(filterMode);
-
-            if (hasLegacyState) {
+            if (state.initialized) {
+                // Once the local file exists, it is the source of truth.
+                // This prevents stale data from an old browser from coming back.
+                viewedSet.clear();
+                favedSet.clear();
+                (state.viewed || []).forEach((id) => viewedSet.add(id));
+                (state.favorites || []).forEach((id) => favedSet.add(id));
+                localStorage.removeItem(LEGACY_VIEWED_KEY);
+                localStorage.removeItem(LEGACY_FAVED_KEY);
+            } else if (hasLegacyState) {
+                // First run after this change: migrate the current browser once.
                 await persistMapState();
                 localStorage.removeItem(LEGACY_VIEWED_KEY);
                 localStorage.removeItem(LEGACY_FAVED_KEY);
             }
+
+            updateViewedStat();
+            updateFavStat();
+            setFilter(filterMode);
         } catch (error) {
             // Keep the already-loaded legacy localStorage state as a fallback.
             console.warn("Could not load map state:", error);

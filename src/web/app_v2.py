@@ -82,7 +82,9 @@ def api_map_state():
     """Load or replace local map favorites/viewed state."""
     if request.method == "GET":
         with _MAP_STATE_LOCK:
-            return jsonify(_load_map_state())
+            state = _load_map_state()
+            state["initialized"] = os.path.exists(MAP_STATE_FILE)
+            return jsonify(state)
 
     payload = request.get_json(silent=True) or {}
     state = {

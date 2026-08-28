@@ -1,6 +1,15 @@
 (() => {
     "use strict";
 
+    // Leaflet positions the popup container absolutely. The legacy viewed-toast
+    // code sets an inline `position: relative` after 5 seconds, which breaks
+    // Leaflet's coordinates and makes the popup jump. Keep Leaflet's positioning
+    // authoritative while still allowing the toast to be absolutely positioned
+    // inside the popup container.
+    const popupPositionStyle = document.createElement("style");
+    popupPositionStyle.textContent = ".leaflet-popup { position: absolute !important; }";
+    document.head.appendChild(popupPositionStyle);
+
     const escapeHtml = (value) =>
         String(value ?? "")
             .replaceAll("&", "&amp;")

@@ -101,7 +101,7 @@
     }
 
     if (typeof map !== "undefined") {
-        map.on("movestart zoomstart", () => map.closePopup());
+        map.on("dragstart zoomstart", () => map.closePopup());
     }
 
     document.addEventListener("keydown", (event) => {

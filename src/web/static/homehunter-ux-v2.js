@@ -81,4 +81,97 @@
     if (subtitle) {
         subtitle.title = "Marker hover shows a compact tooltip; click opens details.";
     }
+
+    // Persist favorites/viewed on the local Home Hunter server instead of tying
+    // them to one browser profile. Existing localStorage data is migrated once.
+    const LEGACY_VIEWED_KEY = "homehunter_viewed_v1";
+    const LEGACY_FAVED_KEY = "homehunter_faved_v1";
+
+    const persistMapState = async () => {
+        const response = await fetch("/api/map-state", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                favorites: [...favedSet],
+                viewed: [...viewedSet],
+            }),
+        });
+        if (!response.ok) {
+            throw new Error(`map state save failed (${response.status})`);
+        }
+    };
+
+    const saveMapState = () => {
+        void persistMapState().catch((error) => {
+            console.warn("Could not save map state:", error);
+        });
+    };
+
+    if (typeof markViewed === "function") {
+        markViewed = function (id) {
+            if (viewedSet.has(id)) return;
+            viewedSet.add(id);
+            updateViewedStat();
+            saveMapState();
+        };
+    }
+
+    if (typeof clearViewed === "function") {
+        clearViewed = function () {
+            viewedSet.clear();
+            updateViewedStat();
+            setFilter(filterMode);
+            saveMapState();
+        };
+    }
+
+    if (typeof toggleFav === "function") {
+        toggleFav = function (id) {
+            if (favedSet.has(id)) favedSet.delete(id);
+            else favedSet.add(id);
+            updateFavStat();
+            saveMapState();
+        };
+    }
+
+    if (typeof clearFaved === "function") {
+        clearFaved = function () {
+            favedSet.clear();
+            updateFavStat();
+            setFilter(filterMode);
+            saveMapState();
+        };
+    }
+
+    const loadMapState = async () => {
+        const hasLegacyState =
+            localStorage.getItem(LEGACY_VIEWED_KEY) !== null ||
+            localStorage.getItem(LEGACY_FAVED_KEY) !== null;
+
+        try {
+            const response = await fetch("/api/map-state", { cache: "no-store" });
+            if (!response.ok) {
+                throw new Error(`map state load failed (${response.status})`);
+            }
+
+            const state = await response.json();
+            (state.viewed || []).forEach((id) => viewedSet.add(id));
+            (state.favorites || []).forEach((id) => favedSet.add(id));
+
+            updateViewedStat();
+            updateFavStat();
+            setFilter(filterMode);
+
+            if (hasLegacyState) {
+                await persistMapState();
+                localStorage.removeItem(LEGACY_VIEWED_KEY);
+                localStorage.removeItem(LEGACY_FAVED_KEY);
+            }
+        } catch (error) {
+            // Keep the already-loaded legacy localStorage state as a fallback.
+            console.warn("Could not load map state:", error);
+        }
+    };
+
+    void loadMapState();
 })();

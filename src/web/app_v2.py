@@ -4,17 +4,19 @@ It layers small, isolated improvements over the existing Flask app:
 - launches the progressive scraper runner;
 - caches /api/listings until its backing files change;
 - sorts API results nearest-first;
-- injects a click-only popup UX patch without forking the large template.
+- persists map user state (favorites/viewed) on local disk;
+- injects the small map UX patch without forking the large template.
 """
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
 import threading
 import time
 
-from flask import jsonify
+from flask import jsonify, request
 
 from src.web import app as legacy
 
@@ -23,6 +25,11 @@ app = legacy.app
 _LISTINGS_CACHE_LOCK = threading.Lock()
 _LISTINGS_CACHE_KEY = None
 _LISTINGS_CACHE_PAYLOAD = None
+
+_MAP_STATE_LOCK = threading.Lock()
+MAP_STATE_FILE = os.path.join(
+    legacy._PROJECT_ROOT, "results-local", "map_user_state.json"
+)
 
 
 def _mtime_ns(path: str) -> int:
@@ -38,6 +45,57 @@ def _listings_source_key() -> tuple[int, int, int]:
         _mtime_ns(legacy.GEOCODE_CACHE_FILE),
         _mtime_ns(legacy.CONFIG_FILE),
     )
+
+
+def _clean_state_ids(values) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    return sorted({value for value in values if isinstance(value, str) and value})
+
+
+def _load_map_state() -> dict:
+    try:
+        with open(MAP_STATE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        return {"favorites": [], "viewed": []}
+    except (OSError, json.JSONDecodeError) as exc:
+        legacy.logger.warning("Could not read map user state: %s", exc)
+        return {"favorites": [], "viewed": []}
+
+    return {
+        "favorites": _clean_state_ids(data.get("favorites")),
+        "viewed": _clean_state_ids(data.get("viewed")),
+    }
+
+
+def _save_map_state(state: dict) -> None:
+    os.makedirs(os.path.dirname(MAP_STATE_FILE), exist_ok=True)
+    temp_file = MAP_STATE_FILE + ".tmp"
+    with open(temp_file, "w", encoding="utf-8") as f:
+        json.dump(state, f, ensure_ascii=False, indent=2)
+    os.replace(temp_file, MAP_STATE_FILE)
+
+
+@app.route("/api/map-state", methods=["GET", "PUT"])
+def api_map_state():
+    """Load or replace local map favorites/viewed state."""
+    if request.method == "GET":
+        with _MAP_STATE_LOCK:
+            return jsonify(_load_map_state())
+
+    payload = request.get_json(silent=True) or {}
+    state = {
+        "favorites": _clean_state_ids(payload.get("favorites")),
+        "viewed": _clean_state_ids(payload.get("viewed")),
+    }
+    try:
+        with _MAP_STATE_LOCK:
+            _save_map_state(state)
+    except OSError as exc:
+        legacy.logger.error("Could not save map user state: %s", exc)
+        return jsonify({"error": str(exc)}), 500
+    return jsonify(state)
 
 
 def api_listings_v2():
@@ -164,6 +222,7 @@ if __name__ == "__main__":
     print("  HOME HUNTER — OPTIMIZED MAP VIEWER")
     print("=" * 52)
     print("  Popup : click only (hover = small tooltip)")
+    print("  State : favorites/viewed saved to results-local/map_user_state.json")
     print("  API   : nearest-first + file-change cache")
     print("  URL   : http://localhost:5001")
     print("=" * 52 + "\n")

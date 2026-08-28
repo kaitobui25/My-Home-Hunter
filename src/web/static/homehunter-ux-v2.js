@@ -20,6 +20,29 @@
         return `<strong>${name}</strong><br>${price} · ${distance}<br><span style="opacity:.65">クリックで詳細</span>`;
     };
 
+    const keepPopupStableOnIconChange = (marker) => {
+        if (marker._homeHunterStablePopup) return;
+        marker._homeHunterStablePopup = true;
+
+        const setIconNow = marker.setIcon.bind(marker);
+        let pendingIcon = null;
+
+        marker.setIcon = function (icon) {
+            if (this.isPopupOpen?.()) {
+                pendingIcon = icon;
+                return this;
+            }
+            return setIconNow(icon);
+        };
+
+        marker.on("popupclose", () => {
+            if (!pendingIcon) return;
+            const icon = pendingIcon;
+            pendingIcon = null;
+            setIconNow(icon);
+        });
+    };
+
     const makePopupClickOnly = (marker, listing) => {
         // Remove the original openPopup-on-mouseover handler. Leaflet's normal
         // bindPopup click handler remains intact.
@@ -46,6 +69,7 @@
         renderMarkers = function (listings) {
             originalRenderMarkers(listings);
             allMarkers.forEach((marker) => {
+                keepPopupStableOnIconChange(marker);
                 makePopupClickOnly(marker, marker.options?._listing);
             });
         };

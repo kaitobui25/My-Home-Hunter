@@ -28,6 +28,7 @@ from src.scraper.fast_rental_hunters import (
     FastNiftyRentalHunter,
 )
 from src.local import run_local as legacy
+from src.local.yahoo_integration import run_yahoo_search
 
 logger = logging.getLogger("local.runner.v2")
 
@@ -151,6 +152,8 @@ def _run_nifty_progressive(
 
 
 def _url_site(url: str) -> str | None:
+    if "realestate.yahoo.co.jp" in url:
+        return "yahoo"
     if "nifty.com" in url:
         return "nifty"
     if "homes.co.jp" in url:
@@ -238,6 +241,17 @@ def run_all(config: AppConfig, target_name: str | None, headless: bool) -> None:
                 geocoder,
                 headless,
             )
+        elif search.site == "yahoo" and search.type == "rental":
+            seen, canonical = run_yahoo_search(
+                search=search,
+                config=config,
+                seen=seen,
+                listing_filter=listing_filter,
+                telegram=telegram,
+                geocoder=geocoder,
+                on_seen_updated=legacy._save_local_seen,
+            )
+            complete_for_delist = bool(canonical)
         else:
             seen, canonical = legacy.run_local_search(
                 search=search,
@@ -310,6 +324,7 @@ def main() -> None:
     print(f"  Headless       : {args.headless}")
     print(f"  Local seen DB  : {legacy.LOCAL_SEEN_FILE}")
     print("  Nifty mode     : page-by-page, save/display immediately")
+    print("  Yahoo mode     : direct HTTP, no browser")
     print("=" * 60 + "\n")
 
     if args.reset_tele or args.refilter:

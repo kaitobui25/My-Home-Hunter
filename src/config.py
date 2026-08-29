@@ -180,6 +180,8 @@ def load_config(path: str = "config.yaml") -> AppConfig:
                 site = "nifty"
             elif "homes.co.jp" in url:
                 site = "homes"
+            elif "realestate.yahoo.co.jp" in url:
+                site = "yahoo"
             else:
                 site = "unknown"
         searches.append(SearchConfig(

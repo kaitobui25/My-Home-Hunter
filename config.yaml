@@ -30,20 +30,31 @@ searches:
 
   - name: "Nifty Toyonaka Rental"
     type: rental
-    enabled: true
+    enabled: false
     # site: nifty  # Không cần — tự detect từ URL (myhome.nifty.com)
     url: "https://myhome.nifty.com/rent/osaka/toyonakashi_ct/?r1=40000&r2=70000&r3=21,22,24,31,32,34,41,42,44,52,54&ex1=1&sort=recommend"
 
   - name: "Homes Toyonanka Rental"
     type: rental
-    enabled: true
+    enabled: false
     url: "https://www.homes.co.jp/chintai/osaka/toyonaka-city/list/"
+
+  - name: "Yahoo 三国・庄内"
+    type: rental
+    enabled: true
+    url: "https://realestate.yahoo.co.jp/rent/search/?ln=6668&ma_from=30&mc_flg=1&rent_from=40000&rent_to=80000&rl_dtl=4%2C5%2C6%2C7%2C8%2C9%2C10%2C11%2C12%2C13&st=6668050%2C6668040"
+
+  - name: "Yahoo kanzakigawa"
+    type: rental
+    enabled: true
+    url: "https://realestate.yahoo.co.jp/rent/search/?ln=6664&ma_from=30&mc_flg=1&rent_from=40000&rent_to=80000&rl_dtl=4%2C5%2C6%2C7%2C8%2C9%2C10%2C11%2C12%2C13&st=6664040"
 
   - name: "Nifty Yodogawaku Rental"
     type: rental
     enabled: false
     # site: nifty  # Không cần — tự detect từ URL (myhome.nifty.com)
     url: "https://myhome.nifty.com/rent/osaka/osakashiyodogawaku_ct/?r1=40000&r2=70000&r3=21,22,24,31,32,34&ex1=1&sort=recommend"
+
 
   - name: "Homes Yodogawaku Rental"
     type: rental
@@ -70,16 +81,16 @@ filters:
   # --- Áp dụng chung cho cả rental và sale ---
   min_size_m2: 30.0 # Diện tích tối thiểu (m²)
   max_size_m2: null # Diện tích tối đa (m²)
-  max_building_age_years: 45 # Tuổi tòa nhà tối đa (năm). null = bỏ qua
+  max_building_age_years: 38 # Tuổi tòa nhà tối đa (năm). null = bỏ qua
 
   # --- Lọc theo vị trí (Geocoding) ---
   location_filter:
     enabled: true
     # Tọa độ trung tâm (Ví dụ: Ga kanzakigawa)
-    center_lat: 34.739561
-    center_lng: 135.465117
+    center_lat: 34.739145
+    center_lng: 135.464773
     # Bán kính tối đa (km)
-    max_distance_km: 0.7
+    max_distance_km: 2.0
 
   # --- Chỉ áp dụng cho rental (thuê nhà) ---
   rental:
